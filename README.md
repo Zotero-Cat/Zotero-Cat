@@ -5,9 +5,9 @@
 ## Quick Start
 
 Download the current release from
-[GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.2.0),
+[GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.2.0),
 or download
-[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.2.0/zotero-cat.xpi)
+[`zotero-cat-v0.2.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.2.0/zotero-cat-v0.2.0.xpi)
 directly. In Zotero, install it from `Tools -> Plugins`.
 
 Zotero-Cat is a Zotero item-pane assistant for reading, summarizing, reviewing, and discussing research items with user-selected model providers. It follows the interaction style of Codex in VS Code, but keeps the provider configurable so users can use OpenAI-compatible gateways, local services, or self-hosted model endpoints.
@@ -126,7 +126,7 @@ npm start
 
 ## Install A Packaged XPI
 
-For packaged installation, build or download `zotero-cat.xpi`, then install it from Zotero `Tools -> Plugins`.
+For packaged installation, build or download the release XPI, then install it from Zotero `Tools -> Plugins`.
 
 Full installation notes are in [doc/INSTALLATION.md](./doc/INSTALLATION.md). A Chinese version is available at [doc/INSTALLATION.zh-CN.md](./doc/INSTALLATION.zh-CN.md).
 

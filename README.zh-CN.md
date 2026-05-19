@@ -4,9 +4,9 @@
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.2.0)
+从 [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.2.0)
 下载当前正式版本，或直接下载
-[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.2.0/zotero-cat.xpi)。在
+[`zotero-cat-v0.2.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.2.0/zotero-cat-v0.2.0.xpi)。在
 Zotero 中通过 `Tools -> Plugins` 安装。
 
 Zotero-Cat 是一个 Zotero 条目面板助手，用于阅读、总结、审阅和讨论文献条目。它的交互风格参考 Codex in VS Code，但模型提供方由用户配置，可接入 OpenAI-compatible 网关、本地服务或自托管模型端点。
@@ -118,7 +118,7 @@ npm start
 
 ## 安装打包后的 XPI
 
-发布候选安装时，先构建或下载 `zotero-cat.xpi`，然后在 Zotero `Tools -> Plugins` 中安装。
+发布候选安装时，先构建或下载 release XPI，然后在 Zotero `Tools -> Plugins` 中安装。
 
 完整安装说明见 [doc/INSTALLATION.zh-CN.md](./doc/INSTALLATION.zh-CN.md)。英文版见 [doc/INSTALLATION.md](./doc/INSTALLATION.md)。
 
