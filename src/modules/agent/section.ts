@@ -13,17 +13,16 @@ import {
 } from "./provider";
 import { shouldRetryChatError, isAbortError } from "./chatRetry";
 import {
-  CONVERSATION_STORE_VERSION,
   ConversationState,
   MAX_VISIBLE_CONVERSATION_OPTIONS,
   RuntimeMessage,
-  buildActiveConversationStore,
   createConversation,
-  parseConversationStorePayload,
-  selectConversationsForPersistence,
-  serializeConversation,
   touchConversation,
 } from "./conversationStore";
+import {
+  loadConversationFileStore,
+  saveConversationFileStore,
+} from "./conversationFileStore";
 import {
   resolveConversationScopeKey,
   resolveCustomContextKey,
@@ -56,8 +55,10 @@ import { openAgentPreferences } from "../prefsPane";
 import {
   parseAssistantToolActions,
   executeToolAction,
+  hasExecutableAssistantToolAction,
   inferAssistantReadOnlyToolAction,
   looksLikeAssistantToolIntent,
+  splitAssistantToolActionMessage,
   stripAssistantToolActionMarkup,
 } from "./toolAction";
 import {
@@ -79,6 +80,10 @@ import {
   type AnnotationBatch,
   type AnnotationProposal,
 } from "./annotationProposals";
+import {
+  buildFailedAnnotationRepairPrompt,
+  shouldRepairFailedAnnotationBatch,
+} from "./annotationRepair";
 import { renderProposalBatch } from "./proposalView";
 import {
   createAnnotation,
@@ -102,6 +107,7 @@ const MODEL_FETCH_TIMEOUT_MS = 25_000;
 const ROOT_HEIGHT_RATIO = 0.9;
 const CHAT_MAX_ATTEMPTS = 2;
 const CHAT_RETRY_DELAY_MS = 700;
+const CONVERSATION_STORE_SAVE_DELAY_MS = 1200;
 const MAX_DIAGNOSTIC_ENTRIES = 30;
 const resizeObservers = new WeakMap<HTMLDivElement, ResizeObserver>();
 
@@ -128,6 +134,7 @@ interface AgentRuntime {
   conversationsByKey: Map<string, ConversationState>;
   activeConversationKeyByScope: Map<string, string>;
   conversationStoreLoaded: boolean;
+  conversationStoreLoading: boolean;
   sending: boolean;
   workingConversationKey: string | null;
   streamingAssistant: MessagePointer | null;
@@ -158,6 +165,9 @@ interface AgentRuntime {
   pendingToolFollowUp: Map<string, PendingToolFollowUp>;
   activeToolEventByKey: Map<string, number>;
   approvedAnnotationOperationKeys: Set<string>;
+  detectedToolActionByKey: Set<string>;
+  pendingToolActionContentByMessage: Map<string, string>;
+  conversationStoreSaveTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PendingToolFollowUp {
@@ -173,6 +183,7 @@ const runtime: AgentRuntime = {
   conversationsByKey: new Map(),
   activeConversationKeyByScope: new Map(),
   conversationStoreLoaded: false,
+  conversationStoreLoading: false,
   sending: false,
   workingConversationKey: null,
   streamingAssistant: null,
@@ -203,6 +214,9 @@ const runtime: AgentRuntime = {
   pendingToolFollowUp: new Map(),
   activeToolEventByKey: new Map(),
   approvedAnnotationOperationKeys: new Set(),
+  detectedToolActionByKey: new Set(),
+  pendingToolActionContentByMessage: new Map(),
+  conversationStoreSaveTimer: null,
 };
 
 export function registerAgentSection() {
@@ -288,6 +302,19 @@ function renderProviderGate(body: HTMLDivElement, doc: Document) {
   body.replaceChildren(root);
 }
 
+function renderConversationStoreLoading(body: HTMLDivElement, doc: Document) {
+  const root = doc.createElement("div");
+  root.className = "za-agent-root";
+  applyRootDimensions(root, body);
+  ensureBodyResizeObserver(body);
+
+  const loading = doc.createElement("div");
+  loading.className = "za-agent-empty";
+  loading.textContent = getString("agent-waiting-label");
+  root.appendChild(loading);
+  body.replaceChildren(root);
+}
+
 function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   const doc = body.ownerDocument;
   if (!doc) {
@@ -295,6 +322,11 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   }
   if (!isProviderConfigured()) {
     renderProviderGate(body, doc);
+    return;
+  }
+  if (!runtime.conversationStoreLoaded) {
+    ensureConversationStoreLoaded();
+    renderConversationStoreLoading(body, doc);
     return;
   }
   const customContextKey = resolveCustomContextKey(item);
@@ -401,6 +433,11 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
         onRejectAll() {
           rejectAllPending(conversationKey);
           void maybeApplyResolvedBatch(conversationKey);
+        },
+        onDismiss() {
+          runtime.pendingToolFollowUp.delete(conversationKey);
+          clearBatch(conversationKey);
+          void refreshAllSections();
         },
       }),
     );
@@ -764,20 +801,16 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
       assistantMessageIndex,
       requestToken,
       requestReasoningEffort,
-    ).finally(() => {
-      if (requestToken !== runtime.requestToken) {
-        return;
-      }
-      stopWaitingAnimation();
-      runtime.streamingAssistant = null;
-      runtime.sending = false;
-      clearWorkingState(conversationKey);
-      runtime.cancelRequested = false;
-      runtime.cancelActiveRequest = null;
-      runtime.activeToolEventByKey.delete(conversationKey);
-      saveConversationStore();
-      void refreshAllSections();
-    });
+    )
+      .catch(async (error) => {
+        if (requestToken !== runtime.requestToken) {
+          return;
+        }
+        await handleChatFailure(error, conversationKey, assistantMessageIndex);
+      })
+      .finally(() => {
+        finishActiveRequest(conversationKey, requestToken);
+      });
   });
 
   input.addEventListener("keydown", (event: KeyboardEvent) => {
@@ -1089,6 +1122,31 @@ function failActiveToolEvent(conversationKey: string, errorMessage: string) {
   }
 }
 
+function buildMessageActionKey(conversationKey: string, messageIndex: number) {
+  return `${conversationKey}::${messageIndex}`;
+}
+
+function queueToolActionContent(
+  conversationKey: string,
+  messageIndex: number,
+  content: string,
+) {
+  runtime.pendingToolActionContentByMessage.set(
+    buildMessageActionKey(conversationKey, messageIndex),
+    content,
+  );
+}
+
+function takeToolActionContent(
+  conversationKey: string,
+  messageIndex: number,
+): string {
+  const key = buildMessageActionKey(conversationKey, messageIndex);
+  const content = runtime.pendingToolActionContentByMessage.get(key) || "";
+  runtime.pendingToolActionContentByMessage.delete(key);
+  return content;
+}
+
 function appendAssistantContinuation(conversationKey: string): number {
   const conversation = getConversationForKey(conversationKey);
   if (!conversation) {
@@ -1118,8 +1176,10 @@ async function continueAfterAssistantToolAction(
   item: Zotero.Item | null,
   depth: number = 0,
   repairedMissingToolAction: boolean = false,
+  repairedFailedWriteAction: boolean = false,
 ) {
   if (depth >= MAX_TOOL_CHAIN_DEPTH) {
+    runtime.detectedToolActionByKey.delete(conversationKey);
     await refreshAllSections();
     return;
   }
@@ -1130,16 +1190,22 @@ async function continueAfterAssistantToolAction(
   if (!assistantMessage) {
     return;
   }
-  const parsedActions = parseAssistantToolActions(assistantMessage.content);
+  const queuedToolContent = takeToolActionContent(
+    conversationKey,
+    assistantMessageIndex,
+  );
+  const actionContent = queuedToolContent || assistantMessage.content;
+  const parsedActions = parseAssistantToolActions(actionContent);
   const inferredAction = parsedActions.length
     ? null
-    : inferAssistantReadOnlyToolAction(assistantMessage.content);
+    : inferAssistantReadOnlyToolAction(actionContent);
   const actions = inferredAction ? [inferredAction] : parsedActions;
   if (!actions.length) {
+    runtime.detectedToolActionByKey.delete(conversationKey);
     if (
       !repairedMissingToolAction &&
       depth < MAX_TOOL_CHAIN_DEPTH - 1 &&
-      looksLikeAssistantToolIntent(assistantMessage.content)
+      looksLikeAssistantToolIntent(actionContent)
     ) {
       await requestMissingToolActionRepair(
         requestMessages,
@@ -1156,7 +1222,6 @@ async function continueAfterAssistantToolAction(
     await refreshAllSections();
     return;
   }
-  const actionContent = assistantMessage.content;
   const readActions = actions.filter((action) => action.readOnly);
   const writeActions = actions.filter((action) => !action.readOnly);
 
@@ -1184,13 +1249,19 @@ async function continueAfterAssistantToolAction(
     const resultPieces: string[] = [];
     for (const action of readActions) {
       const eventIndex = appendToolEventMessage(conversationKey, action.type);
+      runtime.detectedToolActionByKey.delete(conversationKey);
       await refreshAllSections();
-      const externalContext = await executeToolAction(action, {
-        requestToken,
-        item,
-        onStatus: (status) =>
-          applyWebSearchStatus(status as WebSearchRunStatus),
-      });
+      let externalContext = "";
+      try {
+        externalContext = await executeToolAction(action, {
+          requestToken,
+          item,
+          onStatus: (status) =>
+            applyWebSearchStatus(status as WebSearchRunStatus),
+        });
+      } catch (error) {
+        externalContext = `ERROR: ${formatError(error)}`;
+      }
       if (requestToken !== runtime.requestToken) {
         return;
       }
@@ -1237,6 +1308,7 @@ async function continueAfterAssistantToolAction(
       conversationKey,
       "propose-annotation",
     );
+    runtime.detectedToolActionByKey.delete(conversationKey);
     markToolEventFailed(
       conversationKey,
       eventIndex,
@@ -1249,6 +1321,7 @@ async function continueAfterAssistantToolAction(
       conversationKey,
       "propose-annotation",
     );
+    runtime.detectedToolActionByKey.delete(conversationKey);
     await refreshAllSections();
     const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
     const proposals = [] as Awaited<ReturnType<typeof resolveWriteAction>>;
@@ -1260,21 +1333,56 @@ async function continueAfterAssistantToolAction(
       proposals.push(...resolved);
     }
     if (proposals.length) {
-      markToolEventDone(conversationKey, eventIndex);
       const batch = createBatch(
         conversationKey,
         assistantMessageIndex,
         proposals,
       );
-      runtime.pendingToolFollowUp.set(conversationKey, {
-        requestMessages,
-        assistantContent: actionContent,
-        assistantMessageIndex,
-        reasoningEffort,
-        item,
-        readResults,
-      });
+      const summary = summarizeBatch(batch);
+      if (summary.pending === 0 && summary.failed > 0) {
+        markToolEventFailed(
+          conversationKey,
+          eventIndex,
+          getFirstProposalError(batch) || "No actionable proposals produced.",
+        );
+      } else {
+        markToolEventDone(conversationKey, eventIndex);
+      }
+      if (summary.pending > 0) {
+        runtime.pendingToolFollowUp.set(conversationKey, {
+          requestMessages,
+          assistantContent: actionContent,
+          assistantMessageIndex,
+          reasoningEffort,
+          item,
+          readResults,
+        });
+      } else {
+        runtime.pendingToolFollowUp.delete(conversationKey);
+      }
       saveConversationStore();
+      if (
+        shouldRepairFailedAnnotationBatch(batch, {
+          alreadyRepaired: repairedFailedWriteAction,
+          depth,
+          maxDepth: MAX_TOOL_CHAIN_DEPTH,
+        })
+      ) {
+        clearBatch(conversationKey);
+        await requestFailedAnnotationRepair(
+          requestMessages,
+          conversationKey,
+          assistantMessageIndex,
+          requestToken,
+          reasoningEffort,
+          item,
+          depth,
+          batch,
+          readResults,
+          actionContent,
+        );
+        return;
+      }
       if (shouldAutoApplyAnnotationBatch(batch)) {
         await applyBatchAndContinue(batch.conversationKey, true);
       } else {
@@ -1335,6 +1443,8 @@ async function continueAfterAssistantToolAction(
     reasoningEffort,
     item,
     depth + 1,
+    repairedMissingToolAction,
+    repairedFailedWriteAction,
   );
 }
 
@@ -1372,6 +1482,13 @@ function getScopedPendingApprovalKeys(batch: AnnotationBatch): string[] {
     );
   }
   return [...keys].sort();
+}
+
+function getFirstProposalError(batch: AnnotationBatch): string {
+  return (
+    batch.proposals.find((proposal) => proposal.errorMessage)?.errorMessage ||
+    ""
+  );
 }
 
 async function maybeApplyResolvedBatch(conversationKey: string): Promise<void> {
@@ -1425,7 +1542,15 @@ async function applyBatchAndContinue(
       lastApplyError = "Attachment not found.";
       continue;
     }
-    const result = await applyProposal(attachment, proposal);
+    let result: SaveAnnotationResult;
+    try {
+      result = await applyProposal(attachment, proposal);
+    } catch (error) {
+      result = {
+        success: false,
+        error: formatError(error) || "Apply failed.",
+      };
+    }
     if (!result.success) {
       setProposalStatus(
         conversationKey,
@@ -1492,15 +1617,7 @@ async function applyBatchAndContinue(
       pending.item,
     );
   } finally {
-    if (requestToken === runtime.requestToken) {
-      stopWaitingAnimation();
-      runtime.sending = false;
-      clearWorkingState(conversationKey);
-      runtime.cancelRequested = false;
-      runtime.cancelActiveRequest = null;
-      saveConversationStore();
-      await refreshAllSections();
-    }
+    finishActiveRequest(conversationKey, requestToken);
   }
 }
 
@@ -1548,6 +1665,53 @@ async function requestMissingToolActionRepair(
     reasoningEffort,
     item,
     depth + 1,
+    true,
+    false,
+  );
+}
+
+async function requestFailedAnnotationRepair(
+  requestMessages: AgentMessage[],
+  conversationKey: string,
+  assistantMessageIndex: number,
+  requestToken: number,
+  reasoningEffort: ReasoningEffortValue,
+  item: Zotero.Item | null,
+  depth: number,
+  batch: AnnotationBatch,
+  readResults: string,
+  assistantContent: string,
+): Promise<void> {
+  const continuationIndex = appendAssistantContinuation(conversationKey);
+  await refreshAllSections();
+  const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
+  const followUpMessages = [
+    ...requestMessages,
+    { role: "assistant", content: assistantContent } as AgentMessage,
+    {
+      role: "user",
+      content: buildFailedAnnotationRepairPrompt(batch, readResults, locale),
+    } as AgentMessage,
+  ];
+  await sendMessage(
+    followUpMessages,
+    conversationKey,
+    continuationIndex,
+    requestToken,
+    reasoningEffort,
+  );
+  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
+    return;
+  }
+  await continueAfterAssistantToolAction(
+    followUpMessages,
+    conversationKey,
+    continuationIndex,
+    requestToken,
+    reasoningEffort,
+    item,
+    depth + 1,
+    false,
     true,
   );
 }
@@ -1653,6 +1817,13 @@ async function runChatAttempt(
 ) {
   const provider = createProviderFromPrefs();
   let receivedStreamDelta = false;
+  let detectedToolAction = false;
+  let activeCancel: (() => void) | null = null;
+  let acceptingStreamDelta = true;
+  let resolveDetectedToolAction: ((content: string) => void) | null = null;
+  const detectedToolActionPromise = new Promise<string>((resolve) => {
+    resolveDetectedToolAction = resolve;
+  });
   let refreshScheduled = false;
   const queueStreamRefresh = () => {
     if (refreshScheduled) {
@@ -1664,44 +1835,126 @@ async function runChatAttempt(
       await refreshAllSections();
     });
   };
-  const reply = await provider.chat(requestMessages, {
-    reasoningEffort,
-    onCanceller(cancel) {
-      if (requestToken !== runtime.requestToken) {
-        return;
-      }
-      runtime.cancelActiveRequest = cancel;
-      if (runtime.cancelRequested) {
-        cancel();
-      }
-    },
-    onStreamDelta(delta) {
-      if (requestToken !== runtime.requestToken || !delta) {
-        return;
-      }
-      const assistantMessage = getConversationMessage(
+  const splitAssistantToolMessage = (content: string) => {
+    const assistantMessage = getConversationMessage(
+      conversationKey,
+      assistantMessageIndex,
+    );
+    if (!assistantMessage) {
+      return;
+    }
+    const split = splitAssistantToolActionMessage(content);
+    if (split.toolActionContent) {
+      queueToolActionContent(
         conversationKey,
         assistantMessageIndex,
+        split.toolActionContent,
       );
-      if (!assistantMessage) {
-        return;
+    }
+    assistantMessage.content = split.visibleContent;
+    touchConversationByKey(conversationKey);
+  };
+  const requestToolActionHandling = (content: string) => {
+    if (
+      detectedToolAction ||
+      !content.trim() ||
+      !hasExecutableAssistantToolAction(content)
+    ) {
+      return;
+    }
+    detectedToolAction = true;
+    acceptingStreamDelta = false;
+    splitAssistantToolMessage(content);
+    runtime.detectedToolActionByKey.add(conversationKey);
+    runtime.shouldAutoScroll = true;
+    queueStreamRefresh();
+    resolveDetectedToolAction?.(content);
+    resolveDetectedToolAction = null;
+    const cancel = activeCancel;
+    if (!cancel) {
+      return;
+    }
+    void Promise.resolve().then(() => {
+      try {
+        cancel();
+      } catch {
+        // Ignore cancellation races; the normal idle timeout still applies.
       }
-      if (!receivedStreamDelta) {
-        receivedStreamDelta = true;
-        setReceivedStreamDelta(true);
-        stopWaitingAnimation();
-        runtime.streamingAssistant = {
+    });
+  };
+  let reply = "";
+  try {
+    const providerReply = provider
+      .chat(requestMessages, {
+        reasoningEffort,
+        onCanceller(cancel) {
+          if (!acceptingStreamDelta || requestToken !== runtime.requestToken) {
+            return;
+          }
+          activeCancel = cancel;
+          runtime.cancelActiveRequest = cancel;
+          if (runtime.cancelRequested) {
+            cancel();
+          }
+        },
+        onStreamDelta(delta) {
+          if (
+            !acceptingStreamDelta ||
+            requestToken !== runtime.requestToken ||
+            !delta
+          ) {
+            return;
+          }
+          const assistantMessage = getConversationMessage(
+            conversationKey,
+            assistantMessageIndex,
+          );
+          if (!assistantMessage) {
+            return;
+          }
+          if (!receivedStreamDelta) {
+            receivedStreamDelta = true;
+            setReceivedStreamDelta(true);
+            stopWaitingAnimation();
+            runtime.streamingAssistant = {
+              conversationKey,
+              messageIndex: assistantMessageIndex,
+            };
+            assistantMessage.content = "";
+          }
+          assistantMessage.content += delta;
+          requestToolActionHandling(assistantMessage.content);
+          touchConversationByKey(conversationKey);
+          runtime.shouldAutoScroll = true;
+          queueStreamRefresh();
+        },
+      })
+      .catch((error) => {
+        const assistantMessage = getConversationMessage(
           conversationKey,
-          messageIndex: assistantMessageIndex,
-        };
-        assistantMessage.content = "";
-      }
-      assistantMessage.content += delta;
-      touchConversationByKey(conversationKey);
-      runtime.shouldAutoScroll = true;
-      queueStreamRefresh();
-    },
-  });
+          assistantMessageIndex,
+        );
+        if (
+          detectedToolAction &&
+          assistantMessage &&
+          hasExecutableAssistantToolAction(assistantMessage.content)
+        ) {
+          return assistantMessage.content;
+        }
+        runtime.detectedToolActionByKey.delete(conversationKey);
+        throw error;
+      });
+    reply = await Promise.race([providerReply, detectedToolActionPromise]);
+  } catch (error) {
+    runtime.detectedToolActionByKey.delete(conversationKey);
+    throw error;
+  } finally {
+    resolveDetectedToolAction = null;
+    acceptingStreamDelta = false;
+    if (runtime.cancelActiveRequest === activeCancel) {
+      runtime.cancelActiveRequest = null;
+    }
+  }
   if (requestToken !== runtime.requestToken) {
     return;
   }
@@ -1711,12 +1964,32 @@ async function runChatAttempt(
       assistantMessageIndex,
     );
     if (assistantMessage && !assistantMessage.content.trim() && reply.trim()) {
-      assistantMessage.content = reply;
+      if (hasExecutableAssistantToolAction(reply)) {
+        splitAssistantToolMessage(reply);
+      } else {
+        assistantMessage.content = reply;
+      }
       touchConversationByKey(conversationKey);
     }
     runtime.streamingAssistant = null;
     saveConversationStore();
     await refreshAllSections();
+    return;
+  }
+  if (hasExecutableAssistantToolAction(reply)) {
+    const assistantMessage = getConversationMessage(
+      conversationKey,
+      assistantMessageIndex,
+    );
+    if (assistantMessage) {
+      stopWaitingAnimation();
+      runtime.streamingAssistant = null;
+      runtime.detectedToolActionByKey.add(conversationKey);
+      splitAssistantToolMessage(reply);
+      touchConversationByKey(conversationKey);
+      saveConversationStore();
+      await refreshAllSections();
+    }
     return;
   }
   stopWaitingAnimation();
@@ -1742,6 +2015,7 @@ async function handleChatFailure(
     return;
   }
   runtime.streamingAssistant = null;
+  runtime.detectedToolActionByKey.delete(conversationKey);
   if (runtime.cancelRequested || isAbortError(error)) {
     failActiveToolEvent(conversationKey, "Request aborted");
     assistantMessage.content = getString("agent-cancelled");
@@ -2330,7 +2604,7 @@ function ensureCustomContextStoreLoaded() {
         runtime.customContextByItemKey.set(key, value);
       }
     }
-  } catch (_error) {
+  } catch {
     // Ignore corrupted pref
   }
 }
@@ -2394,7 +2668,7 @@ function touchConversationByKey(conversationKey: string) {
 
 function startNewConversation(scopeKey: string) {
   createNewConversationForScope(scopeKey);
-  saveConversationStore();
+  flushConversationStore();
 }
 
 function clearConversationMessages(conversationKey: string) {
@@ -2406,7 +2680,7 @@ function clearConversationMessages(conversationKey: string) {
   runtime.activeToolEventByKey.delete(conversationKey);
   clearWorkingState(conversationKey);
   touchConversation(conversation);
-  saveConversationStore();
+  flushConversationStore();
 }
 
 function selectConversation(scopeKey: string, conversationKey: string) {
@@ -2415,7 +2689,7 @@ function selectConversation(scopeKey: string, conversationKey: string) {
     return;
   }
   runtime.activeConversationKeyByScope.set(scopeKey, conversation.key);
-  saveConversationStore();
+  flushConversationStore();
 }
 
 function deleteConversation(scopeKey: string, conversationKey: string) {
@@ -2431,7 +2705,7 @@ function deleteConversation(scopeKey: string, conversationKey: string) {
       (candidate) => candidate.key !== conversationKey,
     ) || createNewConversationForScope(scopeKey);
   runtime.activeConversationKeyByScope.set(scopeKey, nextConversation.key);
-  saveConversationStore();
+  flushConversationStore();
 }
 
 function pointsToMessage(
@@ -2446,12 +2720,37 @@ function pointsToMessage(
 }
 
 function ensureConversationStoreLoaded() {
-  if (runtime.conversationStoreLoaded) {
+  if (runtime.conversationStoreLoaded || runtime.conversationStoreLoading) {
     return;
   }
-  runtime.conversationStoreLoaded = true;
-  const raw = getPref("agentConversationStore");
-  const store = parseConversationStorePayload(raw);
+  runtime.conversationStoreLoading = true;
+  void loadConversationFileStore()
+    .then((store) => {
+      if (runtime.conversationStoreLoaded) {
+        return;
+      }
+      applyConversationStore(store);
+      runtime.conversationStoreLoaded = true;
+    })
+    .catch((error) => {
+      recordDiagnostic(
+        "error",
+        "Failed to load conversation history",
+        formatError(error),
+      );
+      runtime.conversationStoreLoaded = true;
+    })
+    .finally(() => {
+      runtime.conversationStoreLoading = false;
+      void refreshAllSections();
+    });
+}
+
+function applyConversationStore(
+  store: Awaited<ReturnType<typeof loadConversationFileStore>>,
+) {
+  runtime.conversationsByKey.clear();
+  runtime.activeConversationKeyByScope.clear();
   for (const conversation of store.conversations) {
     runtime.conversationsByKey.set(conversation.key, conversation);
   }
@@ -2476,22 +2775,45 @@ function ensureConversationStoreLoaded() {
 }
 
 function saveConversationStore() {
+  scheduleConversationStoreSave();
+}
+
+function flushConversationStore() {
+  if (runtime.conversationStoreSaveTimer) {
+    clearTimeout(runtime.conversationStoreSaveTimer);
+    runtime.conversationStoreSaveTimer = null;
+  }
+  void writeConversationStoreNow();
+}
+
+function scheduleConversationStoreSave() {
+  if (runtime.conversationStoreSaveTimer) {
+    return;
+  }
+  runtime.conversationStoreSaveTimer = setTimeout(() => {
+    runtime.conversationStoreSaveTimer = null;
+    void writeConversationStoreNow();
+  }, CONVERSATION_STORE_SAVE_DELAY_MS);
+}
+
+async function writeConversationStoreNow() {
   ensureConversationStoreLoaded();
-  const conversations = selectConversationsForPersistence(
-    [...runtime.conversationsByKey.values()].filter(
-      (conversation) => conversation.messages.length > 0,
-    ),
-  ).map(serializeConversation);
-  const active = buildActiveConversationStore(
-    runtime.activeConversationKeyByScope,
-    runtime.conversationsByKey,
-  );
-  const payload = {
-    version: CONVERSATION_STORE_VERSION,
-    active,
-    conversations,
-  };
-  setPref("agentConversationStore", JSON.stringify(payload));
+  if (!runtime.conversationStoreLoaded) {
+    return;
+  }
+  try {
+    await saveConversationFileStore({
+      conversations: runtime.conversationsByKey.values(),
+      activeConversationKeyByScope: runtime.activeConversationKeyByScope,
+      conversationsByKey: runtime.conversationsByKey,
+    });
+  } catch (error) {
+    recordDiagnostic(
+      "error",
+      "Failed to save conversation history",
+      formatError(error),
+    );
+  }
 }
 
 function requestCancel() {
@@ -2502,6 +2824,28 @@ function requestCancel() {
   if (runtime.cancelActiveRequest) {
     runtime.cancelActiveRequest();
   }
+}
+
+function finishActiveRequest(conversationKey: string, requestToken: number) {
+  if (requestToken !== runtime.requestToken) {
+    return;
+  }
+  stopWaitingAnimation();
+  flushConversationStore();
+  runtime.streamingAssistant = null;
+  runtime.sending = false;
+  clearWorkingState(conversationKey);
+  runtime.cancelRequested = false;
+  runtime.cancelActiveRequest = null;
+  failActiveToolEvent(
+    conversationKey,
+    getString("agent-tool-event-ended-unexpectedly"),
+  );
+  runtime.activeToolEventByKey.delete(conversationKey);
+  runtime.detectedToolActionByKey.delete(conversationKey);
+  runtime.requestToken += 1;
+  flushConversationStore();
+  void refreshAllSections();
 }
 
 function startWorkingState(conversationKey: string) {
@@ -2596,7 +2940,9 @@ function renderActivityStatus(
 
   const label = doc.createElement("span");
   label.className = "za-agent-activity-label";
-  label.textContent = getString("agent-working-label");
+  label.textContent = runtime.detectedToolActionByKey.has(conversationKey)
+    ? getString("agent-tool-detected-label")
+    : getString("agent-working-label");
 
   status.append(indicator, label);
   return status;
@@ -2691,7 +3037,7 @@ function formatMessageDateTime(timestamp: number) {
       second: "2-digit",
       hour12: false,
     }).format(new Date(timestamp));
-  } catch (_error) {
+  } catch {
     return new Date(timestamp).toISOString().replace("T", " ").slice(0, 19);
   }
 }
@@ -2706,7 +3052,7 @@ function formatTokenCount(count: number) {
     return new Intl.NumberFormat(undefined, {
       maximumFractionDigits: 0,
     }).format(count);
-  } catch (_error) {
+  } catch {
     return String(Math.round(count));
   }
 }
@@ -2856,7 +3202,7 @@ function createSessionControls(
     }
     conversation.favorite = !conversation.favorite;
     touchConversation(conversation);
-    saveConversationStore();
+    flushConversationStore();
     void refreshAllSections();
   });
 
@@ -2942,7 +3288,7 @@ function exportConversationToClipboard(conversation: ConversationState) {
     if (win?.navigator?.clipboard) {
       void win.navigator.clipboard.writeText(text);
     }
-  } catch (_error) {
+  } catch {
     // Ignore clipboard errors
   }
   showToast(getString("agent-export-copied"));
@@ -2959,7 +3305,7 @@ function renameConversation(doc: Document, conversation: ConversationState) {
   }
   conversation.title = newTitle.trim() || undefined;
   touchConversation(conversation);
-  saveConversationStore();
+  flushConversationStore();
 }
 
 function showToast(message: string) {
@@ -2974,7 +3320,7 @@ function showToast(message: string) {
     }
     // Simple fallback: log to console
     Zotero.log(`[Zotero-Cat] ${message}`);
-  } catch (_error) {
+  } catch {
     // Ignore
   }
 }
@@ -3245,14 +3591,14 @@ async function copyMessageText(text: string) {
   try {
     Zotero.Utilities.Internal.copyTextToClipboard(value);
     return true;
-  } catch (_error) {
+  } catch {
     try {
       if (!globalThis.navigator?.clipboard?.writeText) {
         return false;
       }
       await globalThis.navigator.clipboard.writeText(value);
       return true;
-    } catch (_fallbackError) {
+    } catch {
       return false;
     }
   }

@@ -423,7 +423,7 @@ function getDOMParser() {
       return null;
     }
     return new DOMParser();
-  } catch (_error) {
+  } catch {
     return null;
   }
 }
@@ -440,7 +440,7 @@ function normalizeDuckDuckGoResultURL(value: string) {
       return normalizeHTTPURL(redirectedURL);
     }
     return normalizeHTTPURL(url.toString());
-  } catch (_error) {
+  } catch {
     return normalizeHTTPURL(rawValue);
   }
 }
@@ -451,7 +451,7 @@ function normalizeHTTPURL(value: string) {
     return url.protocol === "http:" || url.protocol === "https:"
       ? url.toString()
       : "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }

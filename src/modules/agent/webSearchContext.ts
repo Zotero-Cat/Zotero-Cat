@@ -125,7 +125,7 @@ function resolveSearchPrimaryItem(item: Zotero.Item | null) {
 function safeGetDisplayTitle(item: Zotero.Item) {
   try {
     return item.getDisplayTitle() || "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -133,7 +133,7 @@ function safeGetDisplayTitle(item: Zotero.Item) {
 function safeGetItemField(item: Zotero.Item, field: string) {
   try {
     return item.getField(field) || "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -146,6 +146,7 @@ export function registerWebSearchToolHandler() {
   const handler: ToolActionHandler = {
     type: "web-search",
     readOnly: true,
+    description: "Search the web and return compact citation-ready snippets.",
     aliases: [
       "联网搜索",
       "搜索",
@@ -155,6 +156,20 @@ export function registerWebSearchToolHandler() {
       "search web",
       "search",
     ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query.",
+        },
+        q: {
+          type: "string",
+          description: "Alias for query.",
+        },
+      },
+      additionalProperties: true,
+    },
     extractQuery(actionInput, rawRecord) {
       const query =
         asStringField(actionInput.query) ||

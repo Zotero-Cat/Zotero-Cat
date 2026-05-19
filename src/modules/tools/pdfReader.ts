@@ -216,14 +216,14 @@ function ensurePdfJsGlobals(): void {
                     : (() => {
                         try {
                           return JSON.stringify(arg);
-                        } catch (_e) {
+                        } catch {
                           return String(arg);
                         }
                       })(),
               )
               .join(" ")}`,
           );
-        } catch (_e) {
+        } catch {
           // ignore logging failures
         }
       };
@@ -277,13 +277,13 @@ function ensurePdfJsGlobals(): void {
       _fire() {
         try {
           this.onabort?.();
-        } catch (_e) {
+        } catch {
           /* ignore */
         }
         for (const listener of this.listeners) {
           try {
             listener();
-          } catch (_e) {
+          } catch {
             /* ignore */
           }
         }
@@ -370,7 +370,7 @@ function logToZotero(error: unknown): void {
     } else if (typeof zoteroAny.debug === "function") {
       zoteroAny.debug(`[Zotero-Cat pdfReader] ${formatLoadError(error)}`);
     }
-  } catch (_error) {
+  } catch {
     // ignore logging failures
   }
 }
@@ -661,7 +661,7 @@ async function readDocumentPages(
   } finally {
     try {
       await document.destroy();
-    } catch (_error) {
+    } catch {
       // ignore cleanup failures
     }
   }
@@ -677,7 +677,7 @@ function resolvePageLabel(attachment: Zotero.Item, pageIndex: number): string {
         return annotation.annotationPageLabel || String(pageIndex + 1);
       }
     }
-  } catch (_error) {
+  } catch {
     // fall through to default
   }
   return String(pageIndex + 1);
@@ -691,7 +691,7 @@ function parseAnnotationPosition(value: string | undefined): {
   }
   try {
     return JSON.parse(value);
-  } catch (_error) {
+  } catch {
     return null;
   }
 }
@@ -706,7 +706,7 @@ async function resolveAttachmentPath(
     }
     const path = attachment.getFilePath?.();
     return path || null;
-  } catch (_error) {
+  } catch {
     return null;
   }
 }
@@ -719,7 +719,7 @@ async function resolveFileMTime(path: string): Promise<number> {
       if (stat?.lastModified) {
         return stat.lastModified;
       }
-    } catch (_error) {
+    } catch {
       // fall through to Zotero.File
     }
   }
@@ -733,7 +733,7 @@ async function resolveFileMTime(path: string): Promise<number> {
         return mtime;
       }
     }
-  } catch (_error) {
+  } catch {
     // ignore - mtime is best effort for caching
   }
   return 0;

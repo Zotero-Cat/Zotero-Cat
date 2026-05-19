@@ -494,7 +494,7 @@ function readEndpointHint(
       wireAPI: entry.wireAPI,
       stream: true,
     };
-  } catch (_error) {
+  } catch {
     return null;
   }
 }
@@ -512,7 +512,7 @@ function rememberEndpointHint(
   if (typeof raw === "string" && raw.trim()) {
     try {
       map = JSON.parse(raw) as EndpointHintsMap;
-    } catch (_error) {
+    } catch {
       map = {};
     }
   }
@@ -624,7 +624,7 @@ function parseChatResponseJSON(responseText: string, request: unknown) {
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     try {
       return JSON.parse(trimmed) as OpenAIChatResponse;
-    } catch (_error) {
+    } catch {
       // Fall through to structured error message below.
     }
   }
@@ -659,7 +659,7 @@ function getResponseHeader(request: unknown, name: string) {
       return "";
     }
     return getter.call(request, name) || "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -817,7 +817,7 @@ function createStreamCollector(
       }
       fullText += delta;
       onDelta?.(delta);
-    } catch (_error) {
+    } catch {
       // Ignore non-JSON SSE payload fragments.
     }
   }

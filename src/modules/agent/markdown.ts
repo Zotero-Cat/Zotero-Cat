@@ -233,7 +233,7 @@ export function normalizeLink(href: string): string {
       return url.toString();
     }
     return "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }

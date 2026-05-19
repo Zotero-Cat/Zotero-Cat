@@ -62,7 +62,7 @@ Current PDF tool work includes:
 - Read-only context preview with token budget estimate and model context window hint.
 - Folded custom context input for user-supplied context per item, persisted locally per item.
 - Per-item conversation history with native dropdown, new session, clear, delete, export, rename, and favorite.
-- Conversation persistence in Zotero prefs with hard capacity limits.
+- Conversation persistence in a local JSON file under Zotero's data directory with hard capacity limits.
 - Diagnostics panel for retries, model list failures, and final request errors.
 - Shared pure-logic modules for model metadata parsing, conversation storage, item scoping, retry decisions, and tool actions.
 - Unit tests for provider fallback, model probing, context preview, persistence parsing, web search parsing, tool-action parsing, and startup.
@@ -151,7 +151,7 @@ Provider setup examples are in [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md).
 
 Zotero-Cat stores different data in different places:
 
-- Conversation history: Zotero pref `extensions.zotero.zoterocat.agentConversationStore`.
+- Conversation history: local JSON file at `<Zotero data directory>/zotero-cat/agent-conversations.json`.
 - Provider, Base URL, selected model, reasoning effort, endpoint hints: Zotero prefs under `extensions.zotero.zoterocat.*`.
 - Web search toggle, search provider, and search endpoint: Zotero prefs under `extensions.zotero.zoterocat.*`.
 - PDF tools toggle and auto-apply setting: Zotero prefs under `extensions.zotero.zoterocat.*`.
@@ -160,10 +160,10 @@ Zotero-Cat stores different data in different places:
 
 Conversation persistence limits:
 
-- Maximum 64 persisted conversations globally.
-- Maximum 8 persisted conversations per Zotero item.
-- Maximum 40 persisted messages per conversation.
-- Maximum 8000 characters per persisted message.
+- Maximum 128 persisted conversations globally.
+- Maximum 24 persisted conversations per Zotero item.
+- Maximum 80 persisted messages per conversation.
+- Maximum 12000 characters per persisted message.
 
 More privacy and storage notes are in [doc/PRIVACY.md](./doc/PRIVACY.md). A Chinese version is available at [doc/PRIVACY.zh-CN.md](./doc/PRIVACY.zh-CN.md).
 

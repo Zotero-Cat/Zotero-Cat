@@ -162,6 +162,8 @@ Primary files: `src/modules/agent/toolAction.ts`, `src/modules/tools/webSearch.t
 Current tool behavior:
 
 - Tool actions use a registry pattern. `toolAction.ts` defines the `ToolActionHandler` interface and provides `registerToolActionHandler` / `executeToolAction` / `parseAssistantToolActions`.
+- Tool definitions follow a lightweight MCP/OpenAI-compatible contract in `toolProtocol.ts`: each tool can declare `description`, `inputSchema`, and optional `outputSchema` using a JSON Schema subset. The registry can export OpenAI-style function specs and MCP-style tool specs, but Zotero-Cat still owns execution internally.
+- Parsed tool calls must be normalized and validated against the registered tool schema before execution. Invalid inputs should produce a visible tool error and, when useful, a repair follow-up instead of silently falling back to broad behavior.
 - Handlers declare `readOnly`, and the parser can return multiple actions per assistant turn.
 - Web search registers via `registerWebSearchToolHandler()` called from `hooks.ts` during startup.
 - PDF read tools and annotation write stubs register from `hooks.ts` through `registerAnnotationReadTools()` and `registerAnnotationWriteStubs()`.
@@ -171,6 +173,9 @@ Current tool behavior:
 - Search results are formatted as external context before the model request.
 - If a model emits a JSON action such as `{ "action": "联网搜索", "action_input": { "query": "..." } }`, Zotero-Cat parses the action, executes the registered tool when enabled, and sends one follow-up model request with the tool result. Do not let models execute tools directly.
 - Some OpenAI-compatible gateways emit XML-like tool-call markup such as `<tool_call><tool_name>read_pdf</tool_name>...</tool_call>` even without provider-native function calling. Zotero-Cat treats recognized tagged tool calls as tool actions and strips the markup from visible/persisted chat text.
+- During streaming, once a complete executable tool action JSON or tagged tool call is detected, Zotero-Cat may cancel the still-open model stream and immediately switch into tool handling. This prevents providers with slow or dangling stream finalization from leaving visible tool JSON on screen with no progress feedback.
+- Content display and tool handling are separate runtime pipelines. Once a complete executable tool action is detected, the assistant message is split into visible prose and agent-only tool payload. The tool payload is queued by conversation/message key and the tool pipeline is released through an internal detection promise, so it no longer waits for the provider stream to fully close. Late deltas from the cancelled/slow provider are ignored.
+- Model/tool turns must keep the UI busy until the full tool chain and any post-tool follow-up finish. When a turn finishes, the active request token is invalidated so late streaming callbacks from a cancelled or slow provider cannot append text after the UI has returned to idle.
 - If a model emits PDF read actions such as `read_pdf` or `list_annotations`, Zotero-Cat executes them only when PDF tools are enabled and sends one follow-up request with the tool result.
 - If a model says it will call/read/search/annotate but omits a machine-readable action, Zotero-Cat first infers safe read-only PDF/list-annotation actions when obvious, and otherwise performs one repair follow-up asking for an executable action instead of silently stopping. `read_pdf` supports page-scoped reads through fields such as `page`, `fromPage`, and `toPage`.
 - If a model emits PDF write actions such as `propose_annotation`, `modify_annotation`, or `delete_annotation`, Zotero-Cat converts them into proposal batches. Accepted proposals are applied through `Zotero.Annotations.saveFromJSON` or `Zotero.Item.eraseTx`.
@@ -179,6 +184,8 @@ Current tool behavior:
 - Explicit page hints for highlight/underline matching are strict. Do not search other pages after the requested page fails, because that creates plausible but wrong highlights.
 - Annotation update/delete must verify that the target annotation belongs to the selected PDF attachment before mutation.
 - Failed annotation proposals remain failed and non-actionable. Do not turn failed proposal inputs into pending cards.
+- Failed-only annotation proposal batches must not show disabled approval controls as if user confirmation were possible. Show the failure reason and provide a dismiss path.
+- Repairable failed-only annotation proposal batches, such as highlight/underline text that cannot be located in the PDF, may trigger one automatic repair follow-up. The repair prompt must ask the model to use exact PDF text or call `read_pdf` first; never create guessed highlight rects.
 - “Always allow” annotation approval is scoped to the current conversation and attachment as well as operation/type; do not make it global across items or PDFs.
 - Tool execution is owned by Zotero-Cat, not by provider-native function calling, so OpenAI-compatible gateways behave consistently.
 - Do not migrate wholesale to LangChain or LangGraph inside the Zotero plugin unless the complexity clearly justifies the dependency and runtime cost. Instead, evolve the internal tool runtime with LangGraph-style ideas: explicit state transitions, resumable steps where needed, deterministic tool ownership, and human-confirmation checkpoints before user-visible document changes.
@@ -242,13 +249,18 @@ Older plain-pref migration logic exists for the former `openaiApiKey` path. Curr
 
 ### Conversation persistence
 
-Primary file: `src/modules/agent/conversationStore.ts`.
+Primary files:
 
-Conversation history is stored as JSON in Zotero prefs:
+- `src/modules/agent/conversationStore.ts`: payload shape, parsing, serialization, and retention limits.
+- `src/modules/agent/conversationFileStore.ts`: disk-backed load/save and legacy pref migration.
+
+Conversation history is stored as JSON on disk under Zotero's data directory:
 
 ```text
-extensions.zotero.zoterocat.agentConversationStore
+<Zotero data directory>/zotero-cat/agent-conversations.json
 ```
+
+The former pref `extensions.zotero.zoterocat.agentConversationStore` is treated as a legacy migration source only. Do not write large conversation payloads back into Zotero prefs; Zotero warns and can block UI responsiveness on large pref writes.
 
 Payload shape:
 
@@ -264,18 +276,20 @@ Conversations support optional `title` and `favorite` fields. The `customContext
 
 Persistence limits:
 
-- `MAX_PERSISTED_CONVERSATIONS = 64`
-- `MAX_PERSISTED_CONVERSATIONS_PER_SCOPE = 8`
-- `MAX_VISIBLE_CONVERSATION_OPTIONS = MAX_PERSISTED_CONVERSATIONS_PER_SCOPE`
-- `MAX_PERSISTED_MESSAGES_PER_CONVERSATION = 40`
-- `MAX_PERSISTED_MESSAGE_CHARS = 8000`
+- `MAX_PERSISTED_CONVERSATIONS = 128`
+- `MAX_PERSISTED_CONVERSATIONS_PER_SCOPE = 24`
+- `MAX_VISIBLE_CONVERSATION_OPTIONS = 8`
+- `MAX_PERSISTED_MESSAGES_PER_CONVERSATION = 80`
+- `MAX_PERSISTED_MESSAGE_CHARS = 12000`
 
 Storage behavior:
 
 - Scope key isolates conversations by Zotero item.
 - Active conversation pointer persists per scope.
 - Empty conversations do not persist.
+- On first successful disk save after legacy pref migration, the old `agentConversationStore` pref is cleared.
 - Custom context persists per item in `extensions.zotero.zoterocat.customContextStore`.
+- High-frequency streaming/tool paths should call the scheduled `saveConversationStore()` only. Use immediate flush only for stable user actions or final request cleanup.
 
 ## Current Limitations
 

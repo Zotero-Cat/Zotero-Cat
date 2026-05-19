@@ -3,12 +3,11 @@ import { createRuntimeID } from "./runtimeIds";
 import { stripAssistantToolActionMarkup } from "./toolAction";
 
 export const CONVERSATION_STORE_VERSION = 2;
-export const MAX_PERSISTED_CONVERSATIONS = 32;
-export const MAX_PERSISTED_CONVERSATIONS_PER_SCOPE = 6;
-export const MAX_VISIBLE_CONVERSATION_OPTIONS =
-  MAX_PERSISTED_CONVERSATIONS_PER_SCOPE;
-export const MAX_PERSISTED_MESSAGES_PER_CONVERSATION = 30;
-export const MAX_PERSISTED_MESSAGE_CHARS = 4_000;
+export const MAX_PERSISTED_CONVERSATIONS = 128;
+export const MAX_PERSISTED_CONVERSATIONS_PER_SCOPE = 24;
+export const MAX_VISIBLE_CONVERSATION_OPTIONS = 8;
+export const MAX_PERSISTED_MESSAGES_PER_CONVERSATION = 80;
+export const MAX_PERSISTED_MESSAGE_CHARS = 12_000;
 
 export type ToolEventStatus = "running" | "done" | "failed";
 
@@ -109,7 +108,7 @@ export function parseConversationStorePayload(
       }
     }
     return { active, conversations };
-  } catch (_error) {
+  } catch {
     return { active: {}, conversations: [] };
   }
 }

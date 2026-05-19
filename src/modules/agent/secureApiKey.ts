@@ -103,7 +103,7 @@ function findLoginsByUsername(username: string) {
       LOGIN_REALM,
     );
     return logins.filter((login) => login.username === username);
-  } catch (_error) {
+  } catch {
     return [];
   }
 }
@@ -133,7 +133,7 @@ function normalizeBaseURL(baseURL: string) {
     url.search = "";
     const pathname = url.pathname.replace(/\/+$/, "");
     return `${url.origin}${pathname}`;
-  } catch (_error) {
+  } catch {
     return trimmed.replace(/\/+$/, "");
   }
 }

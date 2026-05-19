@@ -13,6 +13,7 @@ export interface ProposalViewHandlers {
   onAcceptAll: () => void;
   onRejectAll: () => void;
   onAlwaysAllow: () => void;
+  onDismiss: () => void;
 }
 
 export function renderProposalBatch(
@@ -47,26 +48,33 @@ export function renderProposalBatch(
   const batchActions = doc.createElement("div");
   batchActions.className = "za-agent-proposal-batch-actions";
 
-  const acceptAll = doc.createElement("button");
-  acceptAll.className = "za-agent-proposal-button za-agent-proposal-accept-all";
-  acceptAll.textContent = getString("agent-proposals-accept-all");
-  acceptAll.disabled = summary.pending === 0;
-  acceptAll.addEventListener("click", () => handlers.onAcceptAll());
+  if (summary.pending > 0) {
+    const acceptAll = doc.createElement("button");
+    acceptAll.className =
+      "za-agent-proposal-button za-agent-proposal-accept-all";
+    acceptAll.textContent = getString("agent-proposals-accept-all");
+    acceptAll.addEventListener("click", () => handlers.onAcceptAll());
 
-  const alwaysAllow = doc.createElement("button");
-  alwaysAllow.className =
-    "za-agent-proposal-button za-agent-proposal-always-allow";
-  alwaysAllow.textContent = getString("agent-proposals-always-allow");
-  alwaysAllow.disabled = summary.pending === 0;
-  alwaysAllow.addEventListener("click", () => handlers.onAlwaysAllow());
+    const alwaysAllow = doc.createElement("button");
+    alwaysAllow.className =
+      "za-agent-proposal-button za-agent-proposal-always-allow";
+    alwaysAllow.textContent = getString("agent-proposals-always-allow");
+    alwaysAllow.addEventListener("click", () => handlers.onAlwaysAllow());
 
-  const rejectAll = doc.createElement("button");
-  rejectAll.className = "za-agent-proposal-button za-agent-proposal-reject-all";
-  rejectAll.textContent = getString("agent-proposals-reject-all");
-  rejectAll.disabled = summary.pending === 0;
-  rejectAll.addEventListener("click", () => handlers.onRejectAll());
+    const rejectAll = doc.createElement("button");
+    rejectAll.className =
+      "za-agent-proposal-button za-agent-proposal-reject-all";
+    rejectAll.textContent = getString("agent-proposals-reject-all");
+    rejectAll.addEventListener("click", () => handlers.onRejectAll());
 
-  batchActions.append(acceptAll, alwaysAllow, rejectAll);
+    batchActions.append(acceptAll, alwaysAllow, rejectAll);
+  } else {
+    const dismiss = doc.createElement("button");
+    dismiss.className = "za-agent-proposal-button";
+    dismiss.textContent = getString("agent-proposals-dismiss");
+    dismiss.addEventListener("click", () => handlers.onDismiss());
+    batchActions.append(dismiss);
+  }
   header.appendChild(batchActions);
   container.appendChild(header);
 

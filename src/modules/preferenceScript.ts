@@ -463,7 +463,7 @@ async function loadApiKey(provider: string, baseURL: string) {
   try {
     await migrateLegacyApiKey(provider, baseURL);
     return getProviderApiKey(provider, baseURL);
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -709,7 +709,7 @@ function copyText(text: string) {
   try {
     Zotero.Utilities.Internal.copyTextToClipboard(text);
     return true;
-  } catch (_error) {
+  } catch {
     return false;
   }
 }

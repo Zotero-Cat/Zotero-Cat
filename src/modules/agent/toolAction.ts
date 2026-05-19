@@ -1,16 +1,28 @@
 import { asString, isRecord, truncate } from "../../utils/text";
+import {
+  formatToolValidationIssues,
+  toMCPToolSpec,
+  toOpenAIToolSpec,
+  validateToolInput,
+  type ToolDefinition,
+  type ToolJSONSchema,
+  type ToolValidationIssue,
+} from "./toolProtocol";
 
 export interface ToolAction {
   type: string;
   query: string;
   rawInput: Record<string, unknown>;
   readOnly: boolean;
+  validationIssues?: ToolValidationIssue[];
 }
 
-export interface ToolActionHandler {
+export interface ToolActionHandler extends ToolDefinition {
   type: string;
   aliases: string[];
   readOnly: boolean;
+  description?: string;
+  inputSchema?: ToolJSONSchema;
   extractQuery(
     actionInput: Record<string, unknown>,
     rawRecord: Record<string, unknown>,
@@ -32,11 +44,33 @@ const MAX_ACTIONS_PER_TURN = 10;
 const handlers = new Map<string, ToolActionHandler>();
 
 export function registerToolActionHandler(handler: ToolActionHandler) {
-  handlers.set(handler.type, handler);
+  handlers.set(handler.type, {
+    ...handler,
+    aliases: normalizeToolAliases(handler),
+  });
 }
 
 export function getRegisteredToolTypes(): string[] {
   return [...handlers.keys()];
+}
+
+export function getToolDefinitions(): ToolDefinition[] {
+  return [...handlers.values()].map((handler) => ({
+    type: handler.type,
+    aliases: handler.aliases,
+    readOnly: handler.readOnly,
+    ...(handler.description ? { description: handler.description } : {}),
+    ...(handler.inputSchema ? { inputSchema: handler.inputSchema } : {}),
+    ...(handler.outputSchema ? { outputSchema: handler.outputSchema } : {}),
+  }));
+}
+
+export function getOpenAIToolSpecs() {
+  return getToolDefinitions().map(toOpenAIToolSpec);
+}
+
+export function getMCPToolSpecs() {
+  return getToolDefinitions().map(toMCPToolSpec);
 }
 
 export function getToolActionHandler(type: string): ToolActionHandler | null {
@@ -88,6 +122,13 @@ export function parseFirstAssistantToolAction(
   return parseAssistantToolActions(content)[0] || null;
 }
 
+export function hasExecutableAssistantToolAction(content: string): boolean {
+  if (!looksLikeExecutableToolMarkup(content)) {
+    return false;
+  }
+  return parseAssistantToolActions(content).length > 0;
+}
+
 /**
  * @deprecated Use `parseFirstAssistantToolAction` or
  * `parseAssistantToolActions` instead. Kept for compatibility with the
@@ -112,6 +153,9 @@ export async function executeToolAction(
   if (!handler.isAvailable()) {
     return `ERROR: Tool is not enabled or unavailable: ${action.type}`;
   }
+  if (action.validationIssues?.length) {
+    return `ERROR: Invalid tool input for ${action.type}: ${formatToolValidationIssues(action.validationIssues)}`;
+  }
   return handler.execute(action.query, {
     requestToken: options.requestToken,
     onStatus: options.onStatus,
@@ -121,9 +165,27 @@ export async function executeToolAction(
 }
 
 export function stripAssistantToolActionMarkup(content: string): string {
-  return stripTaggedToolCallBlocks(stripJSONToolActionBlocks(content))
+  return stripTaggedToolCallBlocks(
+    stripBareJSONToolActionMarkup(stripJSONToolActionBlocks(content)),
+  )
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export function splitAssistantToolActionMessage(content: string): {
+  visibleContent: string;
+  toolActionContent: string;
+} {
+  if (!hasExecutableAssistantToolAction(content)) {
+    return {
+      visibleContent: content,
+      toolActionContent: "",
+    };
+  }
+  return {
+    visibleContent: stripAssistantToolActionMarkup(content),
+    toolActionContent: content,
+  };
 }
 
 export function looksLikeAssistantToolIntent(content: string): boolean {
@@ -179,16 +241,29 @@ function toToolAction(record: Record<string, unknown>): ToolAction | null {
   if (!handler) {
     return null;
   }
-  const actionInput = resolveActionInput(record);
+  const rawInput = resolveActionInput(record);
+  const validation = validateToolInput(rawInput, handler.inputSchema);
+  const actionInput = validation.input;
   const query = handler.extractQuery(actionInput, record);
-  if (!query) {
-    return null;
-  }
   return {
     type: handler.type,
-    query: truncate(query, MAX_TOOL_QUERY_CHARS),
+    query: truncate(query || handler.type, MAX_TOOL_QUERY_CHARS),
     rawInput: actionInput,
     readOnly: handler.readOnly,
+    ...(validation.issues.length || !query
+      ? {
+          validationIssues: validation.issues.concat(
+            query
+              ? []
+              : [
+                  {
+                    path: "action_input",
+                    message: "does not contain enough information to execute",
+                  },
+                ],
+          ),
+        }
+      : {}),
   };
 }
 
@@ -199,6 +274,12 @@ function findHandlerByAlias(alias: string): ToolActionHandler | null {
     }
   }
   return null;
+}
+
+function normalizeToolAliases(handler: ToolActionHandler): string[] {
+  return [
+    ...new Set([handler.type, ...handler.aliases].map(normalizeActionName)),
+  ];
 }
 
 function resolveActionInput(
@@ -243,6 +324,14 @@ function collectJSONCandidates(content: string) {
     candidates.push(content.slice(firstBracket, lastBracket + 1));
   }
   return candidates;
+}
+
+function looksLikeExecutableToolMarkup(content: string): boolean {
+  return (
+    /"action"\s*:/i.test(content) ||
+    /<tool_call\b/i.test(content) ||
+    /<function(?:\s*=|\b)/i.test(content)
+  );
 }
 
 function collectTaggedToolCallRecords(
@@ -297,6 +386,10 @@ function readTaggedToolName(text: string): string {
   if (toolName) {
     return normalizeActionName(toolName);
   }
+  const actionParameter = readNamedParameterText(text, "action");
+  if (actionParameter) {
+    return normalizeActionName(actionParameter);
+  }
   const functionEquals = text.match(
     /<function\s*=\s*["']?([^"'\s>]+)["']?[^>]*>/i,
   )?.[1];
@@ -312,6 +405,22 @@ function readTaggedToolName(text: string): string {
 }
 
 function readTaggedToolInput(text: string): Record<string, unknown> {
+  for (const parameter of [
+    "action_input",
+    "arguments",
+    "parameters",
+    "args",
+    "input",
+  ]) {
+    const body = readNamedParameterText(text, parameter);
+    if (!body) {
+      continue;
+    }
+    const parsed = parseFirstJSONObject(body);
+    if (parsed) {
+      return parsed;
+    }
+  }
   for (const tag of ["arguments", "parameters", "args", "input"]) {
     const body = readFirstTagText(text, tag);
     if (!body) {
@@ -344,8 +453,13 @@ function readSimpleTaggedFields(text: string): Record<string, unknown> {
     "pageNumber",
     "pageIndex",
     "pageLabel",
+    "fromPage",
+    "toPage",
+    "from",
+    "to",
   ]) {
-    const value = readFirstTagText(text, key);
+    const value =
+      readFirstTagText(text, key) || readNamedParameterText(text, key);
     if (value) {
       fields[key] = value;
     }
@@ -371,6 +485,30 @@ function readFirstTagText(text: string, tagName: string): string {
   return match?.[1] ? decodeMarkupText(match[1]).trim() : "";
 }
 
+function readNamedParameterText(text: string, parameterName: string): string {
+  const expected = parameterName.trim().toLowerCase();
+  const pattern = /<parameter\b([^>]*)>([\s\S]*?)<\/parameter>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    const name = readTagAttribute(match[1] || "", "name")
+      .trim()
+      .toLowerCase();
+    if (name !== expected) {
+      continue;
+    }
+    return match[2] ? decodeMarkupText(match[2]).trim() : "";
+  }
+  return "";
+}
+
+function readTagAttribute(attributes: string, name: string): string {
+  const escaped = escapeRegExp(name);
+  const match = attributes.match(
+    new RegExp(`\\b${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"),
+  );
+  return decodeMarkupText(match?.[1] || match?.[2] || match?.[3] || "");
+}
+
 function stripJSONToolActionBlocks(content: string): string {
   return content.replace(/```(?:json)?\s*([\s\S]*?)```/gi, (match, inner) => {
     const text = typeof inner === "string" ? inner.trim() : "";
@@ -382,6 +520,31 @@ function stripJSONToolActionBlocks(content: string): string {
     }
     return match;
   });
+}
+
+function stripBareJSONToolActionMarkup(content: string): string {
+  const firstBrace = content.indexOf("{");
+  const firstBracket = content.indexOf("[");
+  const first =
+    firstBrace < 0
+      ? firstBracket
+      : firstBracket < 0
+        ? firstBrace
+        : Math.min(firstBrace, firstBracket);
+  if (first < 0) {
+    return content;
+  }
+  const lastBrace = content.lastIndexOf("}");
+  const lastBracket = content.lastIndexOf("]");
+  const last = Math.max(lastBrace, lastBracket);
+  if (last <= first) {
+    return content;
+  }
+  const candidate = content.slice(first, last + 1);
+  if (!parseJSONRecords(candidate).some(looksLikeActionJSON)) {
+    return content;
+  }
+  return `${content.slice(0, first)}${content.slice(last + 1)}`;
 }
 
 function stripTaggedToolCallBlocks(content: string): string {

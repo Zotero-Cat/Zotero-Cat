@@ -11,6 +11,7 @@ import {
   type ToolActionHandler,
 } from "./toolAction";
 import type { AnnotationProposalInput } from "./annotationProposals";
+import type { ToolJSONSchema } from "./toolProtocol";
 import {
   extractPages,
   findTextRects,
@@ -43,7 +44,7 @@ async function readAttachmentText(
       (Zotero as unknown as { logError?: (e: unknown) => void }).logError?.(
         error,
       );
-    } catch (_e) {
+    } catch {
       // ignore logging failures
     }
     if (request.explicitRange) {
@@ -95,7 +96,7 @@ async function readZoteroIndexedText(attachment: Zotero.Item): Promise<string> {
     if (typeof indexed === "string" && indexed.trim()) {
       return indexed.trim();
     }
-  } catch (_error) {
+  } catch {
     // fall through
   }
   try {
@@ -110,7 +111,7 @@ async function readZoteroIndexedText(attachment: Zotero.Item): Promise<string> {
     if (fulltext?.indexItems) {
       try {
         await fulltext.indexItems([attachment.id]);
-      } catch (_error) {
+      } catch {
         // ignore - attempt to read whatever is indexed
       }
     }
@@ -122,7 +123,7 @@ async function readZoteroIndexedText(attachment: Zotero.Item): Promise<string> {
         return content.trim();
       }
     }
-  } catch (_error) {
+  } catch {
     // fall through
   }
   return "";
@@ -147,6 +148,8 @@ export function registerAnnotationReadTools(): void {
   const readPdfHandler: ToolActionHandler = {
     type: "read-pdf",
     readOnly: true,
+    description:
+      "Read text from the current Zotero PDF attachment, optionally scoped to pages.",
     aliases: [
       "read_pdf",
       "read pdf",
@@ -156,6 +159,31 @@ export function registerAnnotationReadTools(): void {
       "read-paper",
       "read_paper",
     ],
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Read intent or topic." },
+        topic: { type: "string", description: "Alias for query." },
+        page: { type: "integer", description: "1-based page number." },
+        fromPage: {
+          type: "integer",
+          description: "1-based start page for a page range.",
+        },
+        toPage: {
+          type: "integer",
+          description: "1-based end page for a page range.",
+        },
+        pageIndex: {
+          type: "integer",
+          description: "0-based page index.",
+        },
+        pageLabel: {
+          type: "string",
+          description: "PDF page label, such as 7 or iv.",
+        },
+      },
+      additionalProperties: true,
+    },
     extractQuery(actionInput, rawRecord) {
       const query =
         asStringField(actionInput.query) ||
@@ -199,6 +227,7 @@ export function registerAnnotationReadTools(): void {
   const listAnnotationsHandler: ToolActionHandler = {
     type: "list-annotations",
     readOnly: true,
+    description: "List existing Zotero annotations on PDF attachments.",
     aliases: [
       "list_annotations",
       "list annotations",
@@ -207,6 +236,11 @@ export function registerAnnotationReadTools(): void {
       "查看标注",
       "列出标注",
     ],
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    },
     extractQuery(_actionInput) {
       return "__all__";
     },
@@ -270,7 +304,9 @@ export function registerAnnotationWriteStubs(): void {
     registerToolActionHandler({
       type,
       readOnly: false,
+      description: buildWriteDescription(type),
       aliases: buildWriteAliases(type),
+      inputSchema: buildWriteInputSchema(type),
       extractQuery(actionInput) {
         const candidate =
           asStringField(actionInput.text) ||
@@ -326,6 +362,69 @@ function buildWriteAliases(type: string): string[] {
     "remove_annotation",
     "删除标注",
   ];
+}
+
+function buildWriteDescription(type: string): string {
+  if (type === "propose-annotation") {
+    return "Propose a new PDF annotation. Zotero-Cat resolves text to PDF coordinates before asking the user to approve.";
+  }
+  if (type === "modify-annotation") {
+    return "Propose updates to an existing Zotero PDF annotation.";
+  }
+  return "Propose deleting an existing Zotero PDF annotation.";
+}
+
+function buildWriteInputSchema(type: string): ToolJSONSchema {
+  const common: Record<string, ToolJSONSchema> = {
+    type: {
+      type: "string",
+      enum: ["highlight", "underline", "note", "text"],
+      description: "Annotation type.",
+    },
+    text: {
+      type: "string",
+      description: "Exact PDF text for highlight/underline.",
+    },
+    comment: {
+      type: "string",
+      description: "Annotation comment.",
+    },
+    color: {
+      type: "string",
+      description: "Hex color such as #ffd400.",
+    },
+    page: {
+      type: "integer",
+      description: "1-based page number.",
+    },
+    pageIndex: {
+      type: "integer",
+      description: "0-based page index.",
+    },
+    pageLabel: {
+      type: "string",
+      description: "PDF page label.",
+    },
+    attachmentKey: {
+      type: "string",
+      description: "Target PDF attachment key.",
+    },
+    attachmentID: {
+      type: "integer",
+      description: "Target PDF attachment ID.",
+    },
+  };
+  if (type !== "propose-annotation") {
+    common.key = {
+      type: "string",
+      description: "Existing Zotero annotation key.",
+    };
+  }
+  return {
+    type: "object",
+    properties: common,
+    additionalProperties: true,
+  };
 }
 
 export async function resolveWriteAction(
@@ -992,7 +1091,7 @@ function parseAnnotationPageIndex(value: string | undefined): number {
     ) {
       return Math.max(0, Math.floor(parsed.pageIndex));
     }
-  } catch (_error) {
+  } catch {
     // ignore
   }
   return 0;
@@ -1004,7 +1103,7 @@ function mergeRectsFromExisting(item: Zotero.Item): number[][] {
     if (Array.isArray(parsed?.rects)) {
       return parsed.rects as number[][];
     }
-  } catch (_error) {
+  } catch {
     // ignore
   }
   return [];
@@ -1133,7 +1232,7 @@ function readField(record: Record<string, unknown>, field: string): string {
       return String(value);
     }
     return "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }

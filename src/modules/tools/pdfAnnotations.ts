@@ -209,7 +209,7 @@ function generateAnnotationKey(): string {
     if (key && key.length === 8) {
       return key;
     }
-  } catch (_error) {
+  } catch {
     // fall through to local fallback
   }
   return Math.random().toString(36).slice(2, 10).toUpperCase().padEnd(8, "A");
@@ -223,7 +223,7 @@ function splitIfNeeded(
     if (Array.isArray(variants) && variants.length) {
       return variants;
     }
-  } catch (_error) {
+  } catch {
     // Fall back to the original JSON if splitting is unavailable or throws.
   }
   return [json];
@@ -450,7 +450,7 @@ function readErrorField(
       return String(value);
     }
     return "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }

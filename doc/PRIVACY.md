@@ -51,8 +51,8 @@ batch for the current session and are not saved as Zotero annotations.
 
 Zotero-Cat stores:
 
-- Conversation history in Zotero pref
-  `extensions.zotero.zoterocat.agentConversationStore`.
+- Conversation history in a local JSON file at
+  `<Zotero data directory>/zotero-cat/agent-conversations.json`.
 - Provider ID, Base URL, selected model, reasoning effort, and endpoint hints in
   Zotero prefs under `extensions.zotero.zoterocat.*`.
 - Web search enablement, provider ID, and endpoint in Zotero prefs under
@@ -78,6 +78,8 @@ by the provider you configure.
 ## Removing Local Data
 
 - Delete conversations from the Zotero-Cat session controls.
+- To remove all conversation history outside the UI, delete
+  `<Zotero data directory>/zotero-cat/agent-conversations.json`.
 - Clear custom context from the Zotero-Cat context editor for the relevant item.
 - Clear or change provider settings from the Zotero-Cat preferences pane.
 - Remove saved API Keys through the host Firefox/Zotero Login Manager storage if

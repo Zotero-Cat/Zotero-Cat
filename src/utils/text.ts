@@ -130,7 +130,7 @@ export function formatShortDateTime(timestamp: number): string {
       minute: "2-digit",
       hour12: false,
     }).format(new Date(timestamp));
-  } catch (_error) {
+  } catch {
     return new Date(timestamp).toISOString().replace("T", " ").slice(5, 16);
   }
 }

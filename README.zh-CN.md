@@ -55,7 +55,7 @@ main 分支现在包含实验性的 PDF 工具代理工作，但尚未提升为�
 - 只读上下文预览、token 预算估算、模型上下文窗口提示。
 - 每个条目的折叠式自定义上下文输入，并按条目本地持久化。
 - 每条 Zotero 文献独立的历史会话，支持新建、清空、删除、导出、重命名和收藏。
-- 会话历史写入 Zotero prefs，并设置容量上限。
+- 会话历史写入 Zotero 数据目录下的本地 JSON 文件，并设置容量上限。
 - 诊断面板展示重试、模型列表失败和请求错误。
 - 模型元数据、会话存储、条目作用域、重试判断和工具调用已拆到可测试的纯逻辑模块。
 - 自动化测试覆盖 Provider fallback、模型探测、上下文预览、持久化解析、联网搜索解析、工具 action 解析和启动加载。
@@ -143,7 +143,7 @@ Provider 示例见 [doc/PROVIDER_SETUP.zh-CN.md](./doc/PROVIDER_SETUP.zh-CN.md)�
 
 Zotero-Cat 把不同数据保存在不同位置：
 
-- 会话历史：Zotero pref `extensions.zotero.zoterocat.agentConversationStore`。
+- 会话历史：本地 JSON 文件 `<Zotero data directory>/zotero-cat/agent-conversations.json`。
 - Provider、Base URL、当前模型、reasoning effort、端点提示：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
 - 联网搜索开关、搜索提供方和搜索接口：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
 - PDF 工具开关和自动应用设置：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
@@ -152,10 +152,10 @@ Zotero-Cat 把不同数据保存在不同位置：
 
 会话持久化限制：
 
-- 全局最多保存 64 个会话。
-- 每个 Zotero 条目最多保存 8 个会话。
-- 每个会话最多保存 40 条消息。
-- 每条消息最多保存 8000 个字符。
+- 全局最多保存 128 个会话。
+- 每个 Zotero 条目最多保存 24 个会话。
+- 每个会话最多保存 80 条消息。
+- 每条消息最多保存 12000 个字符。
 
 隐私和存储说明见 [doc/PRIVACY.zh-CN.md](./doc/PRIVACY.zh-CN.md)。英文版见 [doc/PRIVACY.md](./doc/PRIVACY.md)。
 

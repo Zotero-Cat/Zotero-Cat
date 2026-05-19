@@ -412,7 +412,7 @@ function getItemTypeName(item: Zotero.Item) {
   }
   try {
     return Zotero.ItemTypes.getName(item.itemTypeID) || "";
-  } catch (_error) {
+  } catch {
     return "";
   }
 }

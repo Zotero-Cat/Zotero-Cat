@@ -1,6 +1,15 @@
 import { assert } from "chai";
 import { shouldRetryChatError } from "../src/modules/agent/chatRetry";
-import { parseConversationStore } from "../src/modules/agent/conversationStore";
+import {
+  MAX_PERSISTED_CONVERSATIONS,
+  MAX_PERSISTED_CONVERSATIONS_PER_SCOPE,
+  MAX_PERSISTED_MESSAGE_CHARS,
+  MAX_PERSISTED_MESSAGES_PER_CONVERSATION,
+  parseConversationStore,
+  selectConversationsForPersistence,
+  serializeConversation,
+  type ConversationState,
+} from "../src/modules/agent/conversationStore";
 import { resolveCustomContextKey } from "../src/modules/agent/itemScope";
 import {
   buildModelEndpointCandidates,
@@ -319,5 +328,44 @@ describe("model probe logic", function () {
     assert.isTrue(conversations[0].favorite);
     assert.isUndefined(conversations[1].title);
     assert.isUndefined(conversations[1].favorite);
+  });
+
+  it("should keep persisted conversation payloads bounded for file storage", function () {
+    assert.equal(MAX_PERSISTED_CONVERSATIONS, 128);
+    assert.equal(MAX_PERSISTED_CONVERSATIONS_PER_SCOPE, 24);
+    assert.equal(MAX_PERSISTED_MESSAGES_PER_CONVERSATION, 80);
+    assert.equal(MAX_PERSISTED_MESSAGE_CHARS, 12000);
+
+    const now = 1000;
+    const conversations: ConversationState[] = Array.from(
+      { length: MAX_PERSISTED_CONVERSATIONS + 4 },
+      (_, index) => ({
+        id: `session-${index}`,
+        key: `scope-${index % 2}::session-${index}`,
+        scopeKey: `scope-${index % 2}`,
+        createdAt: now + index,
+        updatedAt: now + index,
+        messages: [
+          {
+            role: "assistant",
+            content: "x".repeat(MAX_PERSISTED_MESSAGE_CHARS + 500),
+            createdAt: now + index,
+          },
+        ],
+      }),
+    );
+
+    const selected = selectConversationsForPersistence(conversations);
+    assert.isAtMost(selected.length, MAX_PERSISTED_CONVERSATIONS);
+    assert.isAtMost(
+      selected.filter((conversation) => conversation.scopeKey === "scope-0")
+        .length,
+      MAX_PERSISTED_CONVERSATIONS_PER_SCOPE,
+    );
+    const serialized = serializeConversation(conversations[0]);
+    assert.lengthOf(
+      serialized.messages[0].content,
+      MAX_PERSISTED_MESSAGE_CHARS,
+    );
   });
 });

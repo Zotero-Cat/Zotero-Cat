@@ -1,11 +1,15 @@
 import { assert } from "chai";
 import {
   executeToolAction,
+  getMCPToolSpecs,
+  getOpenAIToolSpecs,
+  hasExecutableAssistantToolAction,
   inferAssistantReadOnlyToolAction,
   looksLikeAssistantToolIntent,
   parseAssistantToolActions,
   parseAssistantToolAction,
   registerToolActionHandler,
+  splitAssistantToolActionMessage,
   stripAssistantToolActionMarkup,
 } from "../src/modules/agent/toolAction";
 import {
@@ -61,6 +65,16 @@ registerToolActionHandler({
   type: "read-pdf",
   readOnly: true,
   aliases: ["read_pdf", "read pdf", "read-pdf"],
+  description: "Read PDF text.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      fromPage: { type: "integer" },
+      toPage: { type: "integer" },
+    },
+    additionalProperties: true,
+  },
   extractQuery(actionInput) {
     return typeof actionInput.query === "string"
       ? actionInput.query.trim() || "__full__"
@@ -103,6 +117,29 @@ registerToolActionHandler({
   },
   async execute() {
     return "";
+  },
+});
+
+registerToolActionHandler({
+  type: "schema-test-tool",
+  readOnly: true,
+  aliases: ["schema_test_tool"],
+  description: "Test schema validation.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      fromPage: { type: "integer" },
+    },
+    additionalProperties: true,
+  },
+  extractQuery(actionInput) {
+    return String(actionInput.fromPage || "test");
+  },
+  isAvailable() {
+    return true;
+  },
+  async execute() {
+    return "ok";
   },
 });
 
@@ -292,6 +329,145 @@ describe("web search logic", function () {
       stripAssistantToolActionMarkup(content),
       "我来帮你读取这篇文章，找出重点内容并进行高亮标注。",
     );
+  });
+
+  it("should preserve page range fields from tagged tool calls", function () {
+    const content = `<tool_call><tool_name>read_pdf</tool_name><fromPage>4</fromPage><toPage>6</toPage></tool_call>`;
+    const action = parseAssistantToolAction(content);
+    assert.isNotNull(action);
+    assert.equal(action!.type, "read-pdf");
+    assert.deepEqual(action!.rawInput, {
+      fromPage: 4,
+      toPage: 6,
+    });
+  });
+
+  it("should parse and strip bare read_pdf action JSON", function () {
+    const content = '{"action": "read_pdf", "action_input": {"fromPage": 8}}';
+    const action = parseAssistantToolAction(content);
+    assert.deepEqual(action, {
+      type: "read-pdf",
+      query: "__full__",
+      rawInput: { fromPage: 8 },
+      readOnly: true,
+    });
+    assert.isTrue(hasExecutableAssistantToolAction(content));
+    assert.equal(stripAssistantToolActionMarkup(content), "");
+  });
+
+  it("should split prose and tool action into separate channels", function () {
+    const content = `让我继续阅读实验和结果部分。
+
+\`\`\`json
+{"action": "read_pdf", "action_input": {"fromPage": 11}}
+\`\`\``;
+    const split = splitAssistantToolActionMessage(content);
+    assert.equal(split.visibleContent, "让我继续阅读实验和结果部分。");
+    assert.include(split.toolActionContent, '"action": "read_pdf"');
+    const action = parseAssistantToolAction(split.toolActionContent);
+    assert.deepEqual(action, {
+      type: "read-pdf",
+      query: "__full__",
+      rawInput: { fromPage: 11 },
+      readOnly: true,
+    });
+  });
+
+  it("should parse parameter-style tagged tool calls", function () {
+    const content = `<tool_call>
+<function>
+<parameter name="action">read_pdf</parameter>
+<parameter name="action_input">{"fromPage": 7}</parameter>
+</function>
+</tool_call>`;
+    const action = parseAssistantToolAction(content);
+    assert.deepEqual(action, {
+      type: "read-pdf",
+      query: "__full__",
+      rawInput: { fromPage: 7 },
+      readOnly: true,
+    });
+    assert.isTrue(hasExecutableAssistantToolAction(content));
+  });
+
+  it("should normalize and validate tool inputs through declared schemas", async function () {
+    const action = parseAssistantToolAction(`
+\`\`\`json
+{"action":"schema_test_tool","action_input":{"fromPage":"7"}}
+\`\`\`
+`);
+    assert.isNotNull(action);
+    assert.equal(action!.rawInput.fromPage, 7);
+    assert.isUndefined(action!.validationIssues);
+
+    const invalid = parseAssistantToolAction(`
+\`\`\`json
+{"action":"schema_test_tool","action_input":{"fromPage":"seven"}}
+\`\`\`
+`);
+    assert.isNotNull(invalid);
+    assert.isArray(invalid!.validationIssues);
+    const result = await executeToolAction(invalid!, { requestToken: 1 });
+    assert.match(result, /^ERROR: Invalid tool input/);
+    assert.include(result, "fromPage must be integer");
+  });
+
+  it("should expose registered tools as OpenAI and MCP compatible specs", function () {
+    const openai = getOpenAIToolSpecs().find(
+      (tool) => tool.function.name === "schema-test-tool",
+    );
+    assert.equal(openai?.type, "function");
+    assert.equal(openai?.function.parameters.type, "object");
+
+    const mcp = getMCPToolSpecs().find(
+      (tool) => tool.name === "schema-test-tool",
+    );
+    assert.equal(mcp?.inputSchema.type, "object");
+    assert.include(mcp?.description, "schema");
+  });
+
+  it("should detect streamed annotation proposal JSON as an executable tool action", function () {
+    const content = `现在我已经阅读了文章的主要内容，将分批标注重点。第一批标注聚焦于核心方法和关键贡献：
+
+\`\`\`json
+{
+  "action": "propose_annotation",
+  "action_input": {
+    "type": "highlight",
+    "text": "This paper proposes a clustering-regularized personalized federated learning method. During the global aggregation phase, the method promotes collaboration among similar clients and isolates malicious clients through client similarity clustering; in the local training phase, it adopts parameter regularization to mitigate client drift caused by non-IID data.",
+    "pageLabel": "1",
+    "comment": "CRFL方法的两大核心创新：1）全局聚合阶段通过聚类隔离恶意客户端并促进相似客户端协作；2）本地训练阶段通过参数正则化缓解数据异质性。",
+    "color": "#ff6d5a"
+  }
+}
+\`\`\``;
+    assert.isTrue(hasExecutableAssistantToolAction(content));
+    const action = parseAssistantToolAction(content);
+    assert.isNotNull(action);
+    assert.equal(action!.type, "propose-annotation");
+    assert.isFalse(action!.readOnly);
+    assert.equal(action!.rawInput.pageLabel, "1");
+  });
+
+  it("should parse prose-prefixed annotation proposal JSON", function () {
+    const content = `输出\`\`\`json
+{
+  "action": "propose_annotation",
+  "action_input": {
+    "type": "highlight",
+    "text": "We adopt a pre-trained CLIP model as the base model, and use LoRA for parameter-efficient fine- tuning to reduce computational costs. However, in the presence of widely existing data heterogeneity and potential malicious attackers in the real world, our goal is to achieve high accuracy and robust- ness. We thus design a personalized federated learning framework.",
+    "pageLabel": "7",
+    "comment": "此句概括了论文的出发点、核心挑战与解决方案框架。",
+    "color": "#ffd400"
+  }
+}
+\`\`\``;
+    const action = parseAssistantToolAction(content);
+    assert.isTrue(hasExecutableAssistantToolAction(content));
+    assert.isNotNull(action);
+    assert.equal(action!.type, "propose-annotation");
+    assert.equal(action!.rawInput.pageLabel, "7");
+    assert.include(String(action!.rawInput.text), "pre-trained CLIP");
   });
 
   it("should detect tool intent when the model omits an executable action", function () {

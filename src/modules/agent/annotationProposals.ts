@@ -69,7 +69,7 @@ function emitChange() {
   for (const handler of subscribers) {
     try {
       handler();
-    } catch (_error) {
+    } catch {
       // subscriber errors must not break state updates
     }
   }

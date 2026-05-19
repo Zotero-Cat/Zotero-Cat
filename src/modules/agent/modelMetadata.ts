@@ -173,7 +173,7 @@ export function buildModelEndpointCandidates(baseURL: string) {
     const parsed = new URL(trimmed);
     addCandidateEndpoint(endpoints, `${parsed.origin}/v1/models`);
     addCandidateEndpoint(endpoints, `${parsed.origin}/models`);
-  } catch (_error) {
+  } catch {
     // Ignore invalid URL parse and keep literal candidates.
   }
   return endpoints;
@@ -203,7 +203,7 @@ export function parseModelInfos(
   let payload: unknown;
   try {
     payload = JSON.parse(trimmed);
-  } catch (_error) {
+  } catch {
     throw new ModelProbeError("invalid_json", labels.invalidJSON);
   }
   let foundModelArray = false;

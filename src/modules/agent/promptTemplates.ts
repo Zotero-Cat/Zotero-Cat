@@ -99,7 +99,8 @@ Rules:
 - Call read_pdf or list_annotations before proposing writes when you need the paper contents or target keys. If you need more pages, emit another read_pdf action with fromPage/toPage instead of saying you will read them.
 - Group related writes into at most one batch per reply; the user must accept before you can propose more.
 - Do not invent annotation keys; only modify/delete keys returned by list_annotations.
-- Keep quoted text short (<= 240 characters), copy it verbatim, and include the page label shown by read_pdf whenever possible.
+- For highlight/underline, the text field must be one continuous verbatim span copied from the latest read_pdf output. Do not use summaries, translations, paraphrases, or synthesized claims as highlight text.
+- Keep quoted text short (30-160 characters when possible; never over 240), copy it verbatim, and include the page label shown by read_pdf whenever possible.
 - After the user accepts or rejects, you receive a summary; respond with natural-language commentary, not more JSON, unless you need another batch.`,
   zh: `可用工具(每次使用时在一个 \`\`\`json 代码块里输出一个 JSON 动作):
 
@@ -117,7 +118,8 @@ Rules:
 - 需要正文或目标 key 时,先调用 read_pdf 或 list_annotations。需要继续读取后续页面时,直接输出带 fromPage/toPage 的 read_pdf action,不要只说“我将继续读取”。
 - 每轮回复最多一个写批次;用户确认之前不要追加下一批。
 - 不要编造 annotation key,只能修改/删除 list_annotations 返回过的 key。
-- 引用原文控制在 240 字符内,必须逐字一致;尽量附上 read_pdf 中显示的页码。
+- 对 highlight/underline, text 字段必须是从最近一次 read_pdf 结果中逐字复制的一段连续原文。不要用总结、翻译、改写或综合出来的结论当作高亮文本。
+- 引用原文尽量控制在 30-160 字符内,最长不要超过 240 字符,必须逐字一致;尽量附上 read_pdf 中显示的页码。
 - 用户接受或拒绝后你会收到汇总;之后请用自然语言继续,不要再输出 JSON,除非确实需要下一批。`,
 };
 

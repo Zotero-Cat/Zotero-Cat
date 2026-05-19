@@ -13,6 +13,10 @@ import {
   setProposalStatus,
   summarizeBatch,
 } from "../src/modules/agent/annotationProposals";
+import {
+  buildFailedAnnotationRepairPrompt,
+  shouldRepairFailedAnnotationBatch,
+} from "../src/modules/agent/annotationRepair";
 
 const SAMPLE = {
   op: "create" as const,
@@ -51,6 +55,50 @@ describe("annotation proposals state machine", function () {
     assert.equal(batch.proposals[0].status, "failed");
     assert.isFalse(hasPendingBatch("conv1"));
     assert.lengthOf(acceptAllPending("conv1"), 0);
+  });
+
+  it("recognizes failed quote-location proposals as repairable", function () {
+    const batch = createBatch("conv1", 3, [
+      {
+        ...SAMPLE,
+        status: "failed",
+        errorMessage: "Could not locate the quoted text in the PDF.",
+      },
+    ]);
+
+    assert.isTrue(
+      shouldRepairFailedAnnotationBatch(batch, {
+        alreadyRepaired: false,
+        depth: 1,
+        maxDepth: 3,
+      }),
+    );
+    assert.isFalse(
+      shouldRepairFailedAnnotationBatch(batch, {
+        alreadyRepaired: true,
+        depth: 1,
+        maxDepth: 3,
+      }),
+    );
+  });
+
+  it("builds a repair prompt grounded in PDF tool results", function () {
+    const batch = createBatch("conv1", 3, [
+      {
+        ...SAMPLE,
+        status: "failed",
+        errorMessage: "Could not locate the quoted text in the PDF.",
+      },
+    ]);
+    const prompt = buildFailedAnnotationRepairPrompt(
+      batch,
+      "[tool:read-pdf]\n[p.3]\nhello world",
+      "en",
+    );
+
+    assert.include(prompt, "continuous verbatim span");
+    assert.include(prompt, "hello world");
+    assert.include(prompt, "propose_annotation");
   });
 
   it("groups approval by operation and annotation type", function () {

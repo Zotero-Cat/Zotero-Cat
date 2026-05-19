@@ -36,7 +36,7 @@ PDF 工具默认关闭。启用后，Zotero-Cat 可能通过 `pdfjs-dist` 或 Zo
 
 Zotero-Cat 会保存：
 
-- 会话历史：Zotero pref `extensions.zotero.zoterocat.agentConversationStore`。
+- 会话历史：本地 JSON 文件 `<Zotero data directory>/zotero-cat/agent-conversations.json`。
 - Provider ID、Base URL、当前模型、reasoning effort 和端点提示：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
 - 联网搜索开关、搜索提供方和搜索接口：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
 - PDF 工具开关和自动应用偏好：`extensions.zotero.zoterocat.*` 下的 Zotero prefs。
@@ -54,6 +54,7 @@ Zotero-Cat 不会有意把 API Key 保存到普通 Zotero prefs。Zotero-Cat 不
 ## 删除本地数据
 
 - 通过 Zotero-Cat 会话控件删除会话。
+- 如需在插件 UI 之外删除全部会话历史，可以删除 `<Zotero data directory>/zotero-cat/agent-conversations.json`。
 - 在对应条目的 Zotero-Cat 自定义上下文编辑区清空自定义上下文。
 - 在 Zotero-Cat 设置页清空或修改 Provider 设置。
 - 如需在插件 UI 之外清除凭据，可从宿主 Firefox/Zotero Login Manager 存储中移除保存的 API Key。
