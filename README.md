@@ -5,9 +5,9 @@
 ## Quick Start
 
 Download the current release from
-[GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.1.2),
+[GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.2.0),
 or download
-[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.1.2/zotero-cat.xpi)
+[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.2.0/zotero-cat.xpi)
 directly. In Zotero, install it from `Tools -> Plugins`.
 
 Zotero-Cat is a Zotero item-pane assistant for reading, summarizing, reviewing, and discussing research items with user-selected model providers. It follows the interaction style of Codex in VS Code, but keeps the provider configurable so users can use OpenAI-compatible gateways, local services, or self-hosted model endpoints.
@@ -18,19 +18,16 @@ Zotero-Cat is an independent open-source project and is not affiliated with Zote
 
 ## Current Status
 
-The current release is `v0.1.2`. It supersedes the earlier
-`v0.1.0-alpha` pre-release so alpha users can receive a real version bump from
-the package metadata. Automated checks pass for the current Zotero 9 target.
+The current release is `v0.2.0`. It adds experimental PDF tool agency behind
+the `PDF tools` toggle while keeping automated checks passing for the current
+Zotero 9 target.
 
 The plugin currently runs as a Zotero item-pane section through `ItemPaneManager.registerSection`. It does not replace Zotero's native right sidebar.
 
-## Main Branch After v0.1.2
+## PDF Tool Agency
 
-The main branch now contains experimental PDF tool agency work that is not yet
-promoted to a tagged public release. It is behind the `PDF tools` toggle and is
-intended for local validation before a `v0.2.0-alpha` decision.
-
-Current PDF tool work includes:
+PDF tools remain experimental and off by default. Current PDF tool work
+includes:
 
 - `read_pdf` and `list_annotations` tool actions.
 - `propose_annotation`, `modify_annotation`, and `delete_annotation` actions
@@ -38,6 +35,8 @@ Current PDF tool work includes:
 - Accept / Reject / Accept All / Reject All controls before Zotero annotations
   are saved.
 - `pdfjs-dist` PDF text extraction with Zotero indexed-text fallback.
+- Page-local text matching for highlights and repair prompts that ask the model
+  to split cross-page highlights into separate proposals.
 - Zotero annotation create/update/delete wrappers and proposal-state tests.
 
 ## Implemented Features
@@ -236,12 +235,11 @@ Zotero 10 beta compatibility is not declared until the manual checklist passes o
 
 See [TODO.md](./TODO.md) for the detailed phase plan. A Chinese version is available at [TODO.zh-CN.md](./TODO.zh-CN.md).
 
-Post-0.1.2 hardening:
+Post-0.2.0 hardening:
 
-- Validate the experimental PDF tools on real Zotero 9 libraries before release.
+- Continue validating PDF tools on real Zotero 9 libraries.
 - Verify the latest Zotero beta if available.
 - Keep Zotero 9 manual checklist results current after user-visible UI changes.
-- Decide whether the next tag is `v0.2.0-alpha` or a narrower patch release.
 - Capture real installation screenshots for public release notes.
 
 ## Trademark And Non-Affiliation

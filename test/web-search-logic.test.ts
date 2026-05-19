@@ -476,6 +476,11 @@ describe("web search logic", function () {
         "我将继续阅读全文，并为你标注剩余部分的核心重点。现在开始读取第4页及以后的内容。",
       ),
     );
+    assert.isTrue(
+      looksLikeAssistantToolIntent(
+        "文本跨页导致定位失败。我将使用第16页内的完整句子重新高亮。",
+      ),
+    );
     assert.isFalse(looksLikeAssistantToolIntent("这篇文章的核心观点如下。"));
   });
 

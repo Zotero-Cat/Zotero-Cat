@@ -17,10 +17,9 @@ workflow.
 - License: `AGPL-3.0-or-later`
 - Runtime for development: Node.js 24 LTS
 - Current implementation target: Zotero 9
-- Released: `v0.1.2` (item-pane chat, OpenAI-compatible provider, Zotero
-  context, streaming, history, optional web search)
-- Main branch after `v0.1.2`: experimental PDF tool agency behind the
-  `PDF tools` toggle; not yet promoted to a tagged public release.
+- Released: `v0.2.0` (item-pane chat, OpenAI-compatible provider, Zotero
+  context, streaming, history, optional web search, and experimental PDF tool
+  agency behind the `PDF tools` toggle)
 
 ## Phase 0: Repository Initialization
 
@@ -135,9 +134,9 @@ Goal: let the assistant read a PDF, propose highlights, notes, and edits to
 existing annotations, and apply them only after per-item user confirmation
 (Accept / Reject / Accept All / Reject All).
 
-Status: the first end-to-end implementation is present on main after
-`v0.1.2`, but it still needs manual Zotero UI validation and release hardening
-before it should be advertised as a public release feature.
+Status: the first end-to-end implementation is released in `v0.2.0` behind the
+`PDF tools` toggle. It remains experimental and needs continued Zotero UI
+validation on real PDFs.
 
 ### Onboarding gate
 

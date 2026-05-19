@@ -213,10 +213,7 @@ export function registerAnnotationReadTools(): void {
             "The PDF produced no extractable text. Try opening it in Zotero first so its full text is indexed.",
           );
         }
-        return truncateAtSentence(
-          `PDF attachmentKey=${attachment.key} attachmentID=${attachment.id}\n${text}`,
-          MAX_READ_PDF_CHARS,
-        );
+        return formatReadPdfResult(attachment, text);
       } catch (error) {
         return formatToolError(formatErrorMessage(error));
       }
@@ -634,7 +631,7 @@ async function resolveProposeAnnotation(
             },
             pageHint === null && !pageLabelHint
               ? "Could not locate the quoted text unambiguously in the PDF. Include pageLabel or pageIndex in the action input."
-              : "Could not locate the quoted text in the PDF.",
+              : "Could not locate the quoted text in the PDF. For highlight/underline, use one continuous verbatim span from the requested page. If the intended quote crosses a page boundary, split it into separate page-local proposals.",
           ),
         ];
       }
@@ -1185,6 +1182,17 @@ function summarizeExistingAnnotation(
   return `- ${parts.join(" | ")}`;
 }
 
+function formatReadPdfResult(attachment: Zotero.Item, text: string): string {
+  const output = `PDF attachmentKey=${attachment.key} attachmentID=${attachment.id}\n${text}`;
+  if (output.length <= MAX_READ_PDF_CHARS) {
+    return output;
+  }
+  return [
+    truncateAtSentence(output, MAX_READ_PDF_CHARS),
+    "[read_pdf result truncated. For exact annotation text, call read_pdf with page/fromPage/toPage for the target page before proposing highlights. Highlight/underline text must be a continuous verbatim span on one page; split cross-page highlights into separate page-local proposals.]",
+  ].join("\n\n");
+}
+
 function formatToolError(message: string): string {
   return `ERROR: ${message}`;
 }
@@ -1242,6 +1250,7 @@ function asStringField(value: unknown): string {
 }
 
 export const annotationToolsTestUtils = {
+  formatReadPdfResult,
   parseReadPdfRangeFromQuery,
   renderSelectedReadPdfPages,
   resolveReadPdfPageRequest,

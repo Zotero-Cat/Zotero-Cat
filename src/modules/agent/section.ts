@@ -16,13 +16,33 @@ import {
   ConversationState,
   MAX_VISIBLE_CONVERSATION_OPTIONS,
   RuntimeMessage,
-  createConversation,
   touchConversation,
 } from "./conversationStore";
+import {
+  ConversationRuntimeState,
+  MessagePointer,
+  applyConversationStoreToRuntime,
+  clearConversationMessages as clearConversationMessagesInRuntime,
+  createConversationRuntimeState,
+  createNewConversationForScope,
+  deleteConversation as deleteConversationInRuntime,
+  getActiveConversationForScope as getActiveConversationForScopeInRuntime,
+  getConversationForKey as getConversationForKeyInRuntime,
+  getConversationMessage as getConversationMessageInRuntime,
+  getConversationsForScope as getConversationsForScopeInRuntime,
+  pointsToMessage,
+  selectConversation as selectConversationInRuntime,
+  toProviderMessages,
+  touchConversationByKey as touchConversationByKeyInRuntime,
+} from "./conversationRuntime";
 import {
   loadConversationFileStore,
   saveConversationFileStore,
 } from "./conversationFileStore";
+import {
+  getCustomContextForKey,
+  setCustomContextForKey,
+} from "./customContextStore";
 import {
   resolveConversationScopeKey,
   resolveCustomContextKey,
@@ -86,6 +106,12 @@ import {
 } from "./annotationRepair";
 import { renderProposalBatch } from "./proposalView";
 import {
+  createRunningToolEventMessage,
+  getToolEventLabelID,
+  markToolEventMessage,
+  normalizeToolKind,
+} from "./toolEventState";
+import {
   createAnnotation,
   deleteAnnotation,
   updateAnnotation,
@@ -117,11 +143,6 @@ interface ScrollState {
   clientHeight: number;
 }
 
-interface MessagePointer {
-  conversationKey: string;
-  messageIndex: number;
-}
-
 interface DiagnosticEntry {
   id: string;
   level: "info" | "warning" | "error";
@@ -130,9 +151,7 @@ interface DiagnosticEntry {
   detail?: string;
 }
 
-interface AgentRuntime {
-  conversationsByKey: Map<string, ConversationState>;
-  activeConversationKeyByScope: Map<string, string>;
+interface AgentRuntime extends ConversationRuntimeState {
   conversationStoreLoaded: boolean;
   conversationStoreLoading: boolean;
   sending: boolean;
@@ -148,7 +167,6 @@ interface AgentRuntime {
   shouldAutoScroll: boolean;
   templateID: string;
   contextOptions: AgentContextOptions;
-  customContextByItemKey: Map<string, string>;
   modelOptionsBySource: Map<string, string[]>;
   modelContextBySource: Map<string, Map<string, number>>;
   modelReasoningBySource: Map<string, Map<string, ReasoningEffortValue[]>>;
@@ -180,8 +198,7 @@ interface PendingToolFollowUp {
 }
 
 const runtime: AgentRuntime = {
-  conversationsByKey: new Map(),
-  activeConversationKeyByScope: new Map(),
+  ...createConversationRuntimeState(),
   conversationStoreLoaded: false,
   conversationStoreLoading: false,
   sending: false,
@@ -197,7 +214,6 @@ const runtime: AgentRuntime = {
   shouldAutoScroll: true,
   templateID: DEFAULT_PROMPT_TEMPLATE_ID,
   contextOptions: getDefaultContextOptions(),
-  customContextByItemKey: new Map(),
   modelOptionsBySource: new Map(),
   modelContextBySource: new Map(),
   modelReasoningBySource: new Map(),
@@ -968,88 +984,6 @@ async function sendMessage(
 
 const MAX_TOOL_CHAIN_DEPTH = 3;
 
-type ToolKind =
-  | "read-pdf"
-  | "list-annotations"
-  | "web-search"
-  | "propose-annotation"
-  | "modify-annotation"
-  | "delete-annotation"
-  | "applying-proposals"
-  | "generic";
-
-function normalizeToolKind(actionType: string): ToolKind {
-  const type = actionType.toLowerCase();
-  if (type === "web-search") return "web-search";
-  if (type === "read-pdf") return "read-pdf";
-  if (type === "list-annotations") return "list-annotations";
-  if (type === "propose-annotation") return "propose-annotation";
-  if (type === "modify-annotation") return "modify-annotation";
-  if (type === "delete-annotation") return "delete-annotation";
-  if (type === "applying-proposals") return "applying-proposals";
-  return "generic";
-}
-
-function getToolEventRunningLabel(toolKind: ToolKind): string {
-  if (toolKind === "web-search") {
-    return getString("agent-tool-running-web-search");
-  }
-  if (toolKind === "read-pdf" || toolKind === "list-annotations") {
-    return getString("agent-tool-running-pdf");
-  }
-  if (
-    toolKind === "propose-annotation" ||
-    toolKind === "modify-annotation" ||
-    toolKind === "delete-annotation"
-  ) {
-    return getString("agent-tool-running-proposals");
-  }
-  if (toolKind === "applying-proposals") {
-    return getString("agent-tool-running-applying");
-  }
-  return getString("agent-tool-running-generic");
-}
-
-function getToolEventDoneLabel(toolKind: ToolKind): string {
-  if (toolKind === "web-search") {
-    return getString("agent-tool-event-done-web-search");
-  }
-  if (toolKind === "read-pdf" || toolKind === "list-annotations") {
-    return getString("agent-tool-event-done-pdf");
-  }
-  if (
-    toolKind === "propose-annotation" ||
-    toolKind === "modify-annotation" ||
-    toolKind === "delete-annotation"
-  ) {
-    return getString("agent-tool-event-done-proposals");
-  }
-  if (toolKind === "applying-proposals") {
-    return getString("agent-tool-event-done-applying");
-  }
-  return getString("agent-tool-event-done-generic");
-}
-
-function getToolEventFailedLabel(toolKind: ToolKind): string {
-  if (toolKind === "web-search") {
-    return getString("agent-tool-event-failed-web-search");
-  }
-  if (toolKind === "read-pdf" || toolKind === "list-annotations") {
-    return getString("agent-tool-event-failed-pdf");
-  }
-  if (
-    toolKind === "propose-annotation" ||
-    toolKind === "modify-annotation" ||
-    toolKind === "delete-annotation"
-  ) {
-    return getString("agent-tool-event-failed-proposals");
-  }
-  if (toolKind === "applying-proposals") {
-    return getString("agent-tool-event-failed-applying");
-  }
-  return getString("agent-tool-event-failed-generic");
-}
-
 function appendToolEventMessage(
   conversationKey: string,
   toolType: string,
@@ -1058,19 +992,8 @@ function appendToolEventMessage(
   if (!conversation) {
     return -1;
   }
-  const now = Date.now();
   const index =
-    conversation.messages.push({
-      role: "assistant",
-      content: "",
-      createdAt: now,
-      kind: "tool-event",
-      toolEvent: {
-        toolType: normalizeToolKind(toolType),
-        status: "running",
-        startedAt: now,
-      },
-    }) - 1;
+    conversation.messages.push(createRunningToolEventMessage(toolType)) - 1;
   runtime.activeToolEventByKey.set(conversationKey, index);
   if (runtime.sending) {
     startWorkingState(conversationKey);
@@ -1086,11 +1009,9 @@ function appendToolEventMessage(
 
 function markToolEventDone(conversationKey: string, messageIndex: number) {
   const message = getConversationMessage(conversationKey, messageIndex);
-  if (!message || message.kind !== "tool-event" || !message.toolEvent) {
+  if (!markToolEventMessage(message, "done")) {
     return;
   }
-  message.toolEvent.status = "done";
-  message.toolEvent.finishedAt = Date.now();
   if (runtime.activeToolEventByKey.get(conversationKey) === messageIndex) {
     runtime.activeToolEventByKey.delete(conversationKey);
   }
@@ -1103,12 +1024,9 @@ function markToolEventFailed(
   errorMessage: string,
 ) {
   const message = getConversationMessage(conversationKey, messageIndex);
-  if (!message || message.kind !== "tool-event" || !message.toolEvent) {
+  if (!markToolEventMessage(message, "failed", { errorMessage })) {
     return;
   }
-  message.toolEvent.status = "failed";
-  message.toolEvent.finishedAt = Date.now();
-  message.toolEvent.errorMessage = errorMessage;
   if (runtime.activeToolEventByKey.get(conversationKey) === messageIndex) {
     runtime.activeToolEventByKey.delete(conversationKey);
   }
@@ -1724,7 +1642,9 @@ function buildMissingToolActionRepairPrompt(): string {
       "如果确实需要工具,请只输出一个 JSON 代码块,不要再解释计划。",
       '读取 PDF 全文: {"action":"read_pdf"}',
       '从第 4 页开始读取: {"action":"read_pdf","action_input":{"fromPage":4}}',
+      '修正高亮: {"action":"propose_annotation","action_input":{"type":"highlight","pageLabel":"16","text":"该页内连续出现的 PDF 原文","comment":"批注内容","color":"#ffd400"}}',
       '联网搜索: {"action":"联网搜索","action_input":{"query":"检索词"}}',
+      "高亮/下划线 text 必须是单页内连续出现的 PDF 原文；不要提交跨页 text，跨页内容请拆成每页一条。",
       "如果不需要工具,请直接给出最终回答。",
     ].join("\n");
   }
@@ -1733,7 +1653,9 @@ function buildMissingToolActionRepairPrompt(): string {
     "If you need a tool, reply with only one JSON code block and no planning prose.",
     'Read the full PDF: {"action":"read_pdf"}',
     'Read from page 4 onward: {"action":"read_pdf","action_input":{"fromPage":4}}',
+    'Repair a highlight: {"action":"propose_annotation","action_input":{"type":"highlight","pageLabel":"16","text":"continuous verbatim PDF text on that page","comment":"comment text","color":"#ffd400"}}',
     'Web search: {"action":"web_search","action_input":{"query":"search terms"}}',
+    "Highlight/underline text must be a continuous verbatim PDF span from one page. Do not submit cross-page text; split cross-page highlights into one proposal per page.",
     "If no tool is needed, answer directly.",
   ].join("\n");
 }
@@ -1793,17 +1715,26 @@ function buildAnnotationFollowUpPrompt(
       return `- ${op} p.${page} [${status}] ${snippet}${err}`;
     })
     .join("\n");
+  const hasFailed = summary.failed > 0;
   if (isZh) {
+    const nextInstruction = hasFailed
+      ? "部分标注失败。若要修复失败项,请先确保已读取目标页原文,然后只输出一个 JSON 代码块给出修正后的 propose_annotation；高亮/下划线 text 必须是单页内连续出现的 PDF 原文。不要提交跨页 text,跨页内容请拆成每页一条。若无法修复,请直接说明失败原因。"
+      : "请基于此继续对话(例如确认、追加下一批,或说明不再需要写操作)。";
     return [
-      "已处理你提议的标注批次,结果如下。请基于此继续对话(例如确认、追加下一批,或说明不再需要写操作)。",
+      "已处理你提议的标注批次,结果如下。",
       `汇总:accepted=${summary.accepted} rejected=${summary.rejected} failed=${summary.failed} pending=${summary.pending}`,
       bullets,
+      nextInstruction,
     ].join("\n\n");
   }
+  const nextInstruction = hasFailed
+    ? "Some annotations failed. To repair them, first make sure you have read the target page text, then output only one JSON code block with corrected propose_annotation action(s). Highlight/underline text must be a continuous verbatim span from one PDF page. Do not submit cross-page text; split cross-page highlights into one proposal per page. If repair is not possible, state the failure reason directly."
+    : "Continue the conversation based on the results (e.g. confirm, propose more, or state you no longer need write actions).";
   return [
-    "The annotation batch you proposed has been processed. Continue the conversation based on the results (e.g. confirm, propose more, or state you no longer need write actions).",
+    "The annotation batch you proposed has been processed.",
     `Summary: accepted=${summary.accepted} rejected=${summary.rejected} failed=${summary.failed} pending=${summary.pending}`,
     bullets,
+    nextInstruction,
   ].join("\n\n");
 }
 
@@ -2079,7 +2010,7 @@ function buildToolActionFollowUpPrompt(
   const toolFailed = toolResult.trim().startsWith("ERROR:");
   if (isZh) {
     const chainingLine = allowToolChaining
-      ? "请基于这些结果回答用户原始问题。如果需要,可以继续输出工具 action JSON(例如 propose_annotation),每轮回复最多一个写批次。"
+      ? "请基于这些结果回答用户原始问题。如果需要,可以继续输出工具 action JSON(例如 propose_annotation),每轮回复最多一个写批次。若要高亮/下划线, text 必须是工具结果中单页内连续出现的 PDF 原文；不要使用跨页 text,跨页内容请拆成每页一条。若目标页原文不在结果中,先调用 read_pdf 精确读取该页。"
       : "请基于这些结果回答用户原始问题。不要再次输出 action JSON。";
     const errorLine = toolFailed
       ? "\n\n注意:工具执行失败。请如实告知用户失败原因并建议检查(如 PDF 附件、插件设置等),不要根据摘要或元数据猜测 PDF 原文来新建标注——那样会导致 propose_annotation 找不到文本而全部失败。"
@@ -2091,7 +2022,7 @@ function buildToolActionFollowUpPrompt(
     ].join("\n\n");
   }
   const chainingLine = allowToolChaining
-    ? "Answer the user's original question based on these results. If needed, emit more tool action JSON (e.g. propose_annotation), at most one write batch per reply."
+    ? "Answer the user's original question based on these results. If needed, emit more tool action JSON (e.g. propose_annotation), at most one write batch per reply. For highlight/underline, text must be a continuous verbatim PDF span from one page in the tool result. Do not use cross-page text; split cross-page highlights into one proposal per page. If the target page text is not in the result, call read_pdf for that exact page first."
     : "Answer the user's original question based on these results. Do not output action JSON again.";
   const errorLine = toolFailed
     ? "\n\nNote: the tool failed. Tell the user plainly what went wrong and suggest checks (e.g. the PDF attachment, plugin settings). Do NOT invent highlight text from the abstract or metadata — propose_annotation will fail to locate it and all proposals will be marked failed."
@@ -2563,160 +2494,61 @@ function ensureBodyResizeObserver(body: HTMLDivElement) {
   resizeObservers.set(body, observer);
 }
 
-const CUSTOM_CONTEXT_STORE_PREF = "customContextStore";
-
-function getCustomContextForKey(customContextKey: string) {
-  ensureCustomContextStoreLoaded();
-  return runtime.customContextByItemKey.get(customContextKey) || "";
-}
-
-function setCustomContextForKey(customContextKey: string, value: string) {
-  if (value.trim()) {
-    runtime.customContextByItemKey.set(customContextKey, value);
-  } else {
-    runtime.customContextByItemKey.delete(customContextKey);
-  }
-  saveCustomContextStore();
-}
-
-let customContextStoreLoaded = false;
-
-function ensureCustomContextStoreLoaded() {
-  if (customContextStoreLoaded) {
-    return;
-  }
-  customContextStoreLoaded = true;
-  try {
-    const raw = getPref(CUSTOM_CONTEXT_STORE_PREF);
-    if (typeof raw !== "string" || !raw.trim()) {
-      return;
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object") {
-      return;
-    }
-    for (const [key, value] of Object.entries(parsed)) {
-      if (
-        typeof key === "string" &&
-        typeof value === "string" &&
-        value.trim()
-      ) {
-        runtime.customContextByItemKey.set(key, value);
-      }
-    }
-  } catch {
-    // Ignore corrupted pref
-  }
-}
-
-function saveCustomContextStore() {
-  const store: Record<string, string> = {};
-  for (const [key, value] of runtime.customContextByItemKey) {
-    if (value.trim()) {
-      store[key] = value;
-    }
-  }
-  setPref(CUSTOM_CONTEXT_STORE_PREF, JSON.stringify(store));
-}
-
 function getActiveConversationForScope(scopeKey: string) {
   ensureConversationStoreLoaded();
-  const activeKey = runtime.activeConversationKeyByScope.get(scopeKey);
-  const activeConversation = activeKey
-    ? runtime.conversationsByKey.get(activeKey)
-    : null;
-  if (activeConversation?.scopeKey === scopeKey) {
-    return activeConversation;
-  }
-  const latestConversation = getConversationsForScope(scopeKey)[0];
-  if (latestConversation) {
-    runtime.activeConversationKeyByScope.set(scopeKey, latestConversation.key);
-    return latestConversation;
-  }
-  return createNewConversationForScope(scopeKey);
+  return getActiveConversationForScopeInRuntime(runtime, scopeKey);
 }
 
 function getConversationForKey(conversationKey: string) {
   ensureConversationStoreLoaded();
-  return runtime.conversationsByKey.get(conversationKey) || null;
+  return getConversationForKeyInRuntime(runtime, conversationKey);
 }
 
 function getConversationsForScope(scopeKey: string) {
   ensureConversationStoreLoaded();
-  return [...runtime.conversationsByKey.values()]
-    .filter((conversation) => conversation.scopeKey === scopeKey)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-function createNewConversationForScope(scopeKey: string) {
-  const conversation = createConversation(scopeKey);
-  runtime.conversationsByKey.set(conversation.key, conversation);
-  runtime.activeConversationKeyByScope.set(scopeKey, conversation.key);
-  return conversation;
+  return getConversationsForScopeInRuntime(runtime, scopeKey);
 }
 
 function getConversationMessage(conversationKey: string, messageIndex: number) {
-  return getConversationForKey(conversationKey)?.messages[messageIndex] || null;
+  return getConversationMessageInRuntime(
+    runtime,
+    conversationKey,
+    messageIndex,
+  );
 }
 
 function touchConversationByKey(conversationKey: string) {
-  const conversation = getConversationForKey(conversationKey);
-  if (conversation) {
-    touchConversation(conversation);
-  }
+  touchConversationByKeyInRuntime(runtime, conversationKey);
 }
 
 function startNewConversation(scopeKey: string) {
-  createNewConversationForScope(scopeKey);
+  createNewConversationForScope(runtime, scopeKey);
   flushConversationStore();
 }
 
 function clearConversationMessages(conversationKey: string) {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation) {
+  if (!clearConversationMessagesInRuntime(runtime, conversationKey)) {
     return;
   }
-  conversation.messages = [];
   runtime.activeToolEventByKey.delete(conversationKey);
   clearWorkingState(conversationKey);
-  touchConversation(conversation);
   flushConversationStore();
 }
 
 function selectConversation(scopeKey: string, conversationKey: string) {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation || conversation.scopeKey !== scopeKey) {
+  if (!selectConversationInRuntime(runtime, scopeKey, conversationKey)) {
     return;
   }
-  runtime.activeConversationKeyByScope.set(scopeKey, conversation.key);
   flushConversationStore();
 }
 
 function deleteConversation(scopeKey: string, conversationKey: string) {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation || conversation.scopeKey !== scopeKey) {
+  if (!deleteConversationInRuntime(runtime, scopeKey, conversationKey)) {
     return;
   }
-  runtime.conversationsByKey.delete(conversationKey);
   runtime.activeToolEventByKey.delete(conversationKey);
   clearWorkingState(conversationKey);
-  const nextConversation =
-    getConversationsForScope(scopeKey).find(
-      (candidate) => candidate.key !== conversationKey,
-    ) || createNewConversationForScope(scopeKey);
-  runtime.activeConversationKeyByScope.set(scopeKey, nextConversation.key);
   flushConversationStore();
-}
-
-function pointsToMessage(
-  pointer: MessagePointer | null,
-  conversationKey: string,
-  messageIndex: number,
-) {
-  return (
-    pointer?.conversationKey === conversationKey &&
-    pointer.messageIndex === messageIndex
-  );
 }
 
 function ensureConversationStoreLoaded() {
@@ -2749,29 +2581,7 @@ function ensureConversationStoreLoaded() {
 function applyConversationStore(
   store: Awaited<ReturnType<typeof loadConversationFileStore>>,
 ) {
-  runtime.conversationsByKey.clear();
-  runtime.activeConversationKeyByScope.clear();
-  for (const conversation of store.conversations) {
-    runtime.conversationsByKey.set(conversation.key, conversation);
-  }
-  for (const [scopeKey, conversationKey] of Object.entries(store.active)) {
-    const conversation = runtime.conversationsByKey.get(conversationKey);
-    if (conversation?.scopeKey === scopeKey) {
-      runtime.activeConversationKeyByScope.set(scopeKey, conversationKey);
-    }
-  }
-  const scopes = new Set(
-    store.conversations.map((conversation) => conversation.scopeKey),
-  );
-  for (const scopeKey of scopes) {
-    if (runtime.activeConversationKeyByScope.has(scopeKey)) {
-      continue;
-    }
-    const latest = getConversationsForScope(scopeKey)[0];
-    if (latest) {
-      runtime.activeConversationKeyByScope.set(scopeKey, latest.key);
-    }
-  }
+  applyConversationStoreToRuntime(runtime, store);
 }
 
 function saveConversationStore() {
@@ -2914,16 +2724,6 @@ async function runWaitingLoop(token: number) {
   }
 }
 
-function toProviderMessages(messages: RuntimeMessage[]): AgentMessage[] {
-  return messages
-    .filter((message) => message.kind !== "tool-event")
-    .filter((message) => message.content.trim())
-    .map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
-}
-
 function renderActivityStatus(
   doc: Document,
   conversationKey: string,
@@ -2972,13 +2772,16 @@ function renderToolEventBubble(
   labelNode.className = "za-agent-tool-event-label";
   let label: string;
   if (event.status === "running") {
-    const base = getToolEventRunningLabel(toolKind).replace(/\.+$/, "");
+    const base = getString(getToolEventLabelID(toolKind, "running")).replace(
+      /\.+$/,
+      "",
+    );
     const dots = ".".repeat(runtime.waitingStep + 1);
     label = `${base}${dots}`;
   } else if (event.status === "done") {
-    label = getToolEventDoneLabel(toolKind);
+    label = getString(getToolEventLabelID(toolKind, "done"));
   } else {
-    label = getToolEventFailedLabel(toolKind);
+    label = getString(getToolEventLabelID(toolKind, "failed"));
   }
   labelNode.textContent = label;
   row.append(labelNode);

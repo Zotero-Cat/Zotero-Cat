@@ -16,10 +16,9 @@
 - License：`AGPL-3.0-or-later`
 - 开发运行时：Node.js 24 LTS
 - 当前实现目标：Zotero 9
-- 已发布版本：`v0.1.2`(item-pane 聊天、OpenAI-compatible provider、Zotero
-  上下文、流式输出、历史会话、可选联网搜索)
-- `v0.1.2` 之后的 main 分支：已加入由 `PDF 工具` 开关控制的实验性 PDF
-  工具代理；尚未作为公开 tag 发布。
+- 已发布版本：`v0.2.0`(item-pane 聊天、OpenAI-compatible provider、Zotero
+  上下文、流式输出、历史会话、可选联网搜索，以及由 `PDF 工具` 开关控制的实验性
+  PDF 工具代理)
 
 ## Phase 0: 仓库初始化
 
@@ -122,8 +121,7 @@
 目标:助手能读 PDF、自己提议高亮、批注以及对已有标注的修改/删除,所有写操作
 在用户逐条确认(Accept / Reject / Accept All / Reject All)之后才落盘。
 
-状态：第一版端到端实现已经在 `v0.1.2` 之后进入 main，但还需要 Zotero UI
-人工验证和发布加固，不应先当作正式发布功能宣传。
+状态：第一版端到端实现已随 `v0.2.0` 发布，并由 `PDF 工具` 开关控制。该功能仍为实验性能力，需要继续在真实 PDF 上做 Zotero UI 验证。
 
 ### 首次使用引导
 

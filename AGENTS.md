@@ -24,7 +24,7 @@ Zotero-Cat is a Zotero item-pane assistant. It uses Zotero's official `ItemPaneM
 
 The current implementation covers MVP, Zotero context injection, streaming chat UX, per-item history, persistence, diagnostics, Phase 3.5 engineering quality, repository-side Phase 4 release preparation, optional web search tooling, tool-action orchestration, persistent custom context, session export/rename/favorite controls, and experimental PDF tool agency. PDF tool agency currently includes `read_pdf`, `list_annotations`, annotation proposal generation, Accept / Reject / Accept All / Reject All review cards, optional auto-apply, and Zotero annotation create/update/delete wrappers. Structure work moved model metadata parsing, conversation persistence, item scoping, retry classification, shared message types, web search logic, tool-action parsing, PDF text extraction, annotation persistence, and proposal state out of the item-pane UI file. Release docs, changelog, provider setup notes, privacy notes, and the direct GitHub release workflow are present. Public Markdown intended for users has English and Chinese versions; `README.md` remains the English GitHub homepage and links to `README.zh-CN.md`.
 
-The current public release is `v0.1.2`. The main branch is now post-`v0.1.2` development toward a PDF-tool milestone, likely `v0.2.0-alpha` unless scope is reduced to a patch. The public release asset is `zotero-cat.xpi` under the version tag. The special GitHub release tag named `release` is used only for updater manifests and should remain marked as pre-release and not Latest. Zotero 10 beta compatibility is still not declared; keep `strict_max_version` at `9.*` until the current Zotero beta line passes the manual checklist.
+The current public release is `v0.2.0`. It promotes the first experimental PDF-tool milestone behind the `PDF tools` toggle. The public release asset is `zotero-cat.xpi` under the version tag. The special GitHub release tag named `release` is used only for updater manifests and should remain marked as pre-release and not Latest. Zotero 10 beta compatibility is still not declared; keep `strict_max_version` at `9.*` until the current Zotero beta line passes the manual checklist.
 
 ## Development Environment
 
@@ -70,7 +70,7 @@ Responsibilities:
 - Render the full chat UI.
 - Manage runtime UI state.
 - Handle send, stop, retry, streaming output, copy feedback, diagnostics, model selection, context controls, and session controls.
-- Coordinate conversation loading and saving through `conversationStore.ts`.
+- Coordinate conversation loading and saving through `conversationFileStore.ts`, and keep in-memory session selection/mutation in `conversationRuntime.ts`.
 - Render annotation proposal batches and route accepted proposals through the PDF annotation tool wrappers.
 
 Important UI decisions:
@@ -98,9 +98,12 @@ Pure logic lives outside `section.ts` so it can be tested without importing the 
 - `src/modules/agent/types.ts`: shared `AgentRole` and `AgentMessage` types.
 - `src/modules/agent/modelMetadata.ts`: model endpoint candidate generation, model-list parsing, context-window extraction, reasoning-effort extraction, and model endpoint retry classification.
 - `src/modules/agent/conversationStore.ts`: conversation state types, defensive persistence parsing, serialization, capacity limits, and active-conversation payload building.
+- `src/modules/agent/conversationRuntime.ts`: in-memory conversation maps, active-session selection, session mutation, message-pointer checks, and provider-message projection.
+- `src/modules/agent/customContextStore.ts`: per-item custom context loading, defensive pref parsing, mutation, and persistence.
 - `src/modules/agent/itemScope.ts`: parent-item resolution and stable per-item scope keys.
 - `src/modules/agent/chatRetry.ts`: retry classification for recoverable chat failures and abort/cancel detection.
 - `src/modules/agent/runtimeIds.ts`: runtime ID generation for sessions and diagnostics.
+- `src/modules/agent/toolEventState.ts`: tool-event type normalization, running/done/failed state mutation, and localized label ID selection.
 - `src/modules/agent/annotationProposals.ts`: in-memory annotation proposal batches and status transitions.
 
 Tests for these behaviors should import these pure modules directly. Do not add new test-only exports to `section.ts` or `preferenceScript.ts` for logic that can live in a pure module.
@@ -181,7 +184,9 @@ Current tool behavior:
 - If a model emits PDF write actions such as `propose_annotation`, `modify_annotation`, or `delete_annotation`, Zotero-Cat converts them into proposal batches. Accepted proposals are applied through `Zotero.Annotations.saveFromJSON` or `Zotero.Item.eraseTx`.
 - PDF read results include `attachmentKey` and `attachmentID`. In multi-PDF items, write actions must specify a target attachment or resolve from an existing annotation key; do not silently write to the first attachment.
 - Explicit page-scoped PDF reads must not fall back to unscoped Zotero indexed full text. If requested pages cannot be selected or have no extractable text, return an actionable tool error.
+- `read_pdf` results are bounded and may be truncated. Truncated results must explicitly tell the model to call `read_pdf` with the exact target page before proposing highlights.
 - Explicit page hints for highlight/underline matching are strict. Do not search other pages after the requested page fails, because that creates plausible but wrong highlights.
+- Highlight and underline `text` must be a continuous verbatim span from one PDF page. If intended content crosses a page boundary, split it into separate page-local proposals instead of submitting cross-page text.
 - Annotation update/delete must verify that the target annotation belongs to the selected PDF attachment before mutation.
 - Failed annotation proposals remain failed and non-actionable. Do not turn failed proposal inputs into pending cards.
 - Failed-only annotation proposal batches must not show disabled approval controls as if user confirmation were possible. Show the failure reason and provide a dismiss path.
@@ -294,7 +299,7 @@ Storage behavior:
 ## Current Limitations
 
 - Web search currently uses search snippets only; it does not crawl full webpages.
-- PDF tools are experimental on main after `v0.1.2` and still need Zotero UI regression on real PDFs before release.
+- PDF tools are experimental in `v0.2.0`, off by default, and still need continued Zotero UI regression on real PDFs.
 - PDF highlight placement depends on extractable text and matching rects; scanned, encrypted, or OCR-poor PDFs can fail.
 - The no-API-key onboarding gate has localized strings, but the gate is not wired as the only first-run UI yet.
 - Proposal keyboard shortcuts are still pending.
@@ -325,7 +330,7 @@ Covered areas:
 - Annotation proposal state machine.
 - Startup instance definition.
 
-Pure logic tests should import `modelMetadata.ts`, `conversationStore.ts`, `itemScope.ts`, and `chatRetry.ts` directly. Keep `section.ts` focused on UI/runtime coordination rather than acting as a test utility barrel.
+Pure logic tests should import `modelMetadata.ts`, `conversationStore.ts`, `conversationRuntime.ts`, `customContextStore.ts`, `toolEventState.ts`, `itemScope.ts`, and `chatRetry.ts` directly. Keep `section.ts` focused on UI/runtime coordination rather than acting as a test utility barrel.
 
 Validation commands:
 
@@ -381,12 +386,15 @@ Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` p
 - `src/modules/agent/types.ts`: shared agent message types.
 - `src/modules/agent/modelMetadata.ts`: model endpoint and metadata parsing.
 - `src/modules/agent/conversationStore.ts`: session history parsing and persistence serialization.
+- `src/modules/agent/conversationRuntime.ts`: in-memory session selection and mutation helpers.
+- `src/modules/agent/customContextStore.ts`: per-item custom context pref storage.
 - `src/modules/agent/itemScope.ts`: item scope keys.
 - `src/modules/agent/chatRetry.ts`: chat retry and abort classification.
 - `src/modules/agent/runtimeIds.ts`: runtime ID generation.
 - `src/modules/agent/provider.ts`: model provider behavior.
 - `src/modules/agent/context.ts`: Zotero context collection.
 - `src/modules/agent/toolAction.ts`: tool action registry and orchestration.
+- `src/modules/agent/toolEventState.ts`: tool-event state helpers and label mapping.
 - `src/modules/agent/webSearchContext.ts`: web search context orchestration and web-search tool registration.
 - `src/modules/agent/annotationTools.ts`: PDF read/write tool handler registration and proposal resolution.
 - `src/modules/agent/annotationProposals.ts`: annotation proposal state machine.
@@ -417,7 +425,7 @@ Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` p
 
 ## Next Phase
 
-The next milestone is post-`0.1.2` PDF-tool hardening and deciding whether the next release target is `v0.2.0-alpha` or a smaller patch.
+The next milestone is post-`0.2.0` PDF-tool hardening and Zotero UI regression on real PDFs.
 
 Recommended order:
 

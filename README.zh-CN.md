@@ -4,9 +4,9 @@
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.1.2)
+从 [GitHub Releases](https://github.com/qianjindexiaozu/Zotero-Cat/releases/tag/v0.2.0)
 下载当前正式版本，或直接下载
-[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.1.2/zotero-cat.xpi)。在
+[`zotero-cat.xpi`](https://github.com/qianjindexiaozu/Zotero-Cat/releases/download/v0.2.0/zotero-cat.xpi)。在
 Zotero 中通过 `Tools -> Plugins` 安装。
 
 Zotero-Cat 是一个 Zotero 条目面板助手，用于阅读、总结、审阅和讨论文献条目。它的交互风格参考 Codex in VS Code，但模型提供方由用户配置，可接入 OpenAI-compatible 网关、本地服务或自托管模型端点。
@@ -17,20 +17,19 @@ Zotero-Cat 是独立开源项目，不隶属于 Zotero，也不由 Zotero 或 Di
 
 ## 当前状态
 
-当前版本是 `v0.1.2`。它取代早期的 `v0.1.0-alpha` 预发布版本，让 alpha 用户能够从包元数据上获得真实版本升级。当前 Zotero 9 目标下，自动化检查已通过。
+当前版本是 `v0.2.0`。它加入由 `PDF 工具` 开关控制的实验性 PDF 工具代理；当前 Zotero 9 目标下，自动化检查已通过。
 
 插件当前通过 `ItemPaneManager.registerSection` 作为 Zotero 条目面板里的一个 section 运行，不替换 Zotero 原生右侧栏。
 
-## v0.1.2 之后的 main 分支
+## PDF 工具代理
 
-main 分支现在包含实验性的 PDF 工具代理工作，但尚未提升为带 tag 的公开发布功能。它由 `PDF 工具` 开关控制，主要用于本地验证，再决定是否发布为 `v0.2.0-alpha`。
-
-当前 PDF 工具工作包括：
+PDF 工具仍是实验功能，默认关闭。当前 PDF 工具工作包括：
 
 - `read_pdf` 和 `list_annotations` 工具 action。
 - 将 `propose_annotation`、`modify_annotation`、`delete_annotation` 转换为可审阅的待确认卡片。
 - 在 Zotero 批注保存前提供 Accept / Reject / Accept All / Reject All 控件。
 - 使用 `pdfjs-dist` 抽取 PDF 文本，并在需要时回退到 Zotero 索引文本。
+- 高亮使用单页内原文定位；跨页内容需要拆成每页一条提议。
 - Zotero 标注新建/修改/删除封装，以及提议状态机测试。
 
 ## 已实现功能
@@ -229,13 +228,12 @@ Zotero 10 beta 兼容性需要等当前 beta 线的人工清单通过后再声�
 
 详细阶段计划见 [TODO.zh-CN.md](./TODO.zh-CN.md)。英文版见 [TODO.md](./TODO.md)。
 
-`0.1.2` 后续加固：
+`0.2.0` 后续加固：
 
-- 在真实 Zotero 9 library 上验证实验性 PDF 工具。
+- 继续在真实 Zotero 9 library 上验证 PDF 工具。
 - 如果可用，验证最新 Zotero beta。
 - 每次用户可见 UI 改动后，保持 Zotero 9 人工清单结果为最新。
 - 为公开发布说明截取真实安装截图。
-- 决定下一个 tag 是 `v0.2.0-alpha` 还是范围更小的 patch 版本。
 
 ## 商标和非隶属声明
 

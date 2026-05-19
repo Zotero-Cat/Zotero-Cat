@@ -199,6 +199,7 @@ export function looksLikeAssistantToolIntent(content: string): boolean {
     looksLikePdfReadIntent(text) ||
     looksLikeAnnotationListIntent(text) ||
     looksLikeAnnotationWriteIntent(text) ||
+    looksLikeAnnotationRepairIntent(text) ||
     /(?:我(?:将|会|来|要|需要|继续)|现在|开始|准备|帮你).{0,40}(?:读取|阅读|阅读全文|调用|执行|搜索|联网搜索|标注|高亮|划重点)/i.test(
       text,
     ) ||
@@ -595,6 +596,20 @@ function looksLikeAnnotationListIntent(text: string): boolean {
 function looksLikeAnnotationWriteIntent(text: string): boolean {
   return /(?:添加|新建|创建|继续为|进行|add|create|propose).{0,50}(?:标注|批注|高亮|划重点|annotations?|highlights?)/i.test(
     text,
+  );
+}
+
+function looksLikeAnnotationRepairIntent(text: string): boolean {
+  return (
+    /(?:定位失败|找不到|无法定位|跨页|quoted text|could not locate|cross-page|spans pages)/i.test(
+      text,
+    ) &&
+    /(?:使用|改用|重新|修正|换成|句子|原文|quote|text|span|repair|retry|use)/i.test(
+      text,
+    ) &&
+    /(?:标注|批注|高亮|下划线|划重点|annotation|highlight|underline|page|第\s*\d+\s*页)/i.test(
+      text,
+    )
   );
 }
 

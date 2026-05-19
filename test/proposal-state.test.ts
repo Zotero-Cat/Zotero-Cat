@@ -97,6 +97,7 @@ describe("annotation proposals state machine", function () {
     );
 
     assert.include(prompt, "continuous verbatim span");
+    assert.include(prompt, "cross-page");
     assert.include(prompt, "hello world");
     assert.include(prompt, "propose_annotation");
   });

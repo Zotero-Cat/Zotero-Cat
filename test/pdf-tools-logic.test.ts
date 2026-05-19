@@ -272,6 +272,19 @@ describe("pdf tools logic", function () {
         /produced no extractable text/,
       );
     });
+
+    it("marks truncated PDF reads so the model requests exact pages", function () {
+      const attachment = { key: "ATTACH1", id: 42 } as Zotero.Item;
+      const result = annotationToolsTestUtils.formatReadPdfResult(
+        attachment,
+        "x".repeat(9000),
+      );
+
+      assert.include(result, "attachmentKey=ATTACH1");
+      assert.include(result, "read_pdf result truncated");
+      assert.include(result, "target page");
+      assert.include(result, "one page");
+    });
   });
 
   describe("pdf annotation ownership", function () {

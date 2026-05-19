@@ -7,6 +7,10 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+No unreleased changes yet.
+
+## [0.2.0] - 2026-05-19
+
 ### Added
 
 - Experimental PDF tool agency behind the `PDF tools` toggle, including
@@ -15,22 +19,38 @@ versions until the first public stability commitment.
 - Lazy `pdfjs-dist` PDF text extraction with Zotero indexed-text fallback.
 - Annotation proposal state machine and tests for proposal status transitions.
 - PDF text matching and annotation JSON helper tests.
+- File-backed conversation history under the Zotero data directory, with
+  legacy preference migration.
+- Dedicated pure modules for in-memory conversation runtime state,
+  custom-context storage, and tool-event state.
 
 ### Changed
 
 - Tool-action parsing can now return multiple actions per assistant turn, and
   handlers declare whether they are read-only.
+- Model output display and tool-action handling now run as separate pipelines
+  so executable tool calls can proceed before slow provider stream finalization.
 - PDF highlight placement now keeps pdf.js text spans in PDF user coordinates
   instead of flipping the Y axis, reducing misplaced highlights.
 - Annotation proposals without a reliable page hint now fail on ambiguous
   multi-page matches instead of silently choosing the first occurrence.
+- `read_pdf` now tells the model when its result is truncated and instructs it
+  to read the exact target page before proposing highlights.
+- Highlight and underline repair prompts now require continuous page-local PDF
+  text and tell the model to split cross-page highlights into separate
+  proposals.
 - The PDF tool auto-apply toggle now skips the pending confirmation card and
   proceeds directly to applying accepted proposals.
 - Tool-call status messages use a compact inline state row instead of a dashed
   card.
-- README, TODO, privacy notes, UI checklist, and implementation handoff docs
-  now distinguish the tagged `v0.1.2` release from post-release PDF-tool work
-  on main.
+
+### Fixed
+
+- Assistant replies such as "I will use a complete sentence from page 16" after
+  a failed annotation are now treated as missing tool-action intent, prompting a
+  repair turn instead of silently stopping.
+- Failed annotation proposals remain non-actionable when the PDF quote cannot
+  be located, preventing guessed highlights.
 
 ## [0.1.2] - 2026-05-10
 

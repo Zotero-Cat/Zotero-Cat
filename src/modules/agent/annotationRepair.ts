@@ -59,6 +59,7 @@ export function buildFailedAnnotationRepairPrompt(
     return [
       "上一批标注提议没有被应用，因为 Zotero-Cat 无法在 PDF 中定位你给出的 quoted text。",
       "请修正后重新输出可执行工具 action。高亮/下划线的 text 必须是 PDF 工具结果中连续出现的原文片段；不要使用摘要、翻译、改写或自行概括的句子。",
+      "不要提交跨页 text。若要标注的内容跨页，请拆成每页一条 propose_annotation，并为每条提供对应页面内连续出现的原文。",
       "如果下方没有 PDF 原文，先输出 read_pdf action 读取相关页面；如果有 PDF 原文，请只输出一个 JSON 代码块，重新给出 propose_annotation action，可包含多条。",
       "失败提议:",
       failures || "- unknown failure",
@@ -68,6 +69,7 @@ export function buildFailedAnnotationRepairPrompt(
   return [
     "The previous annotation proposals were not applied because Zotero-Cat could not locate the quoted text in the PDF.",
     "Repair the proposal by emitting executable tool action JSON again. For highlight/underline, text must be one continuous verbatim span from the PDF tool result; do not use summaries, translations, paraphrases, or synthesized claims.",
+    "Do not submit cross-page text. If the intended highlight spans pages, split it into one propose_annotation per page, each with a continuous verbatim span from that page.",
     "If no PDF text is available below, emit a read_pdf action for the relevant pages first. If PDF text is available, output only one JSON code block with corrected propose_annotation action(s).",
     "Failed proposals:",
     failures || "- unknown failure",
