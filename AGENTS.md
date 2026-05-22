@@ -98,7 +98,7 @@ Pure logic lives outside `section.ts` so it can be tested without importing the 
 - `src/modules/agent/types.ts`: shared `AgentRole` and `AgentMessage` types.
 - `src/modules/agent/modelMetadata.ts`: model endpoint candidate generation, model-list parsing, context-window extraction, reasoning-effort extraction, and model endpoint retry classification.
 - `src/modules/agent/conversationStore.ts`: conversation state types, defensive persistence parsing, serialization, capacity limits, and active-conversation payload building.
-- `src/modules/agent/conversationRuntime.ts`: in-memory conversation maps, active-session selection, session mutation, message-pointer checks, and provider-message projection.
+- `src/modules/agent/conversationRuntime.ts`: in-memory conversation maps, active-session selection, session mutation, message-pointer checks, provider-message projection, and `sanitizeToolCallSequences` — the defensive filter that strips orphan assistant `tool_calls` / orphan `role: "tool"` messages before they reach the provider.
 - `src/modules/agent/customContextStore.ts`: per-item custom context loading, defensive pref parsing, mutation, and persistence.
 - `src/modules/agent/itemScope.ts`: parent-item resolution and stable per-item scope keys.
 - `src/modules/agent/chatRetry.ts`: retry classification for recoverable chat failures and abort/cancel detection.
@@ -193,6 +193,8 @@ Current tool behavior:
 - Repairable failed-only annotation proposal batches, such as highlight/underline text that cannot be located in the PDF, may trigger one automatic repair follow-up. The repair prompt must ask the model to use exact PDF text or call `read_pdf` first; never create guessed highlight rects.
 - “Always allow” annotation approval is scoped to the current conversation and attachment as well as operation/type; do not make it global across items or PDFs.
 - Tool execution is owned by Zotero-Cat, not by provider-native function calling, so OpenAI-compatible gateways behave consistently.
+- Native `tool_calls` round-trips must persist their tool results into the in-memory conversation. `section.ts` calls `appendToolResultMessage(...)` for every read tool as it finishes, for write tools after the proposal batch resolves in `applyBatchAndContinue`, and for unrecognized / write-unavailable tool calls in the immediate follow-up path. Without this, the next user turn replays the prior `assistant{tool_calls}` without matching `role: "tool"` messages and strict providers (DeepSeek, OpenAI) reject the request with "insufficient tool messages following tool_calls message". `conversationRuntime.toProviderMessages` runs `sanitizeToolCallSequences` as a final safety net for cancelled or partially-executed turns.
+- `role: "tool"` runtime messages are not rendered in the chat UI; the tool-event bubble (kind: `tool-event`) already conveys progress to the user. Tool messages exist only to keep provider history well-formed.
 - Do not migrate wholesale to LangChain or LangGraph inside the Zotero plugin unless the complexity clearly justifies the dependency and runtime cost. Instead, evolve the internal tool runtime with LangGraph-style ideas: explicit state transitions, resumable steps where needed, deterministic tool ownership, and human-confirmation checkpoints before user-visible document changes.
 
 ### PDF tool agency
@@ -295,6 +297,7 @@ Storage behavior:
 - On first successful disk save after legacy pref migration, the old `agentConversationStore` pref is cleared.
 - Custom context persists per item in `extensions.zotero.zoterocat.customContextStore`.
 - High-frequency streaming/tool paths should call the scheduled `saveConversationStore()` only. Use immediate flush only for stable user actions or final request cleanup.
+- In-memory `conversation.messages` retains `role: "tool"` runtime messages and the originating `assistant.toolCalls` for the lifetime of a session so provider requests stay well-formed across multi-turn replays. Disk serialization deliberately drops both (only `user` / `assistant` plain-text content is persisted) — on reload there are no orphans because `toolCalls` is not restored either. The `sanitizeToolCallSequences` filter inside `toProviderMessages` is the last-line guard against mid-session cancellations or partial failures leaving an orphan assistant `tool_calls`.
 
 ## Current Limitations
 
@@ -324,6 +327,7 @@ Covered areas:
 - Recoverable chat retry behavior.
 - Conversation store defensive parsing.
 - Conversation title and favorite parsing.
+- Defensive sanitization of orphan assistant `tool_calls` and stray `role: "tool"` messages in `toProviderMessages` (`test/conversation-runtime.test.ts`).
 - Streaming delta parsing.
 - Web search parsing and tool-action parsing.
 - PDF text matching and annotation JSON helpers.

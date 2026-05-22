@@ -219,6 +219,126 @@ validation on real PDFs.
       annotation cases and the onboarding gate.
 - [ ] `npm run lint:check && npm run build && npm test` all green.
 
+## Phase 7: Function Calling Standardization
+
+Goal: extract the tool-call orchestration loop out of `section.ts` into a
+dedicated, testable runner; centralize per-endpoint provider quirks
+(reasoning_content echo, native tool_calls unsupported, etc.); unify native
+(`tool_calls`) and text-mode JSON tool-action paths under one state machine.
+This is the structural response to the parade of provider-specific bugs
+(MiMo / DeepSeek-V4-Thinking reasoning_content, silent `MAX_TOOL_CHAIN_DEPTH`
+truncation, two divergent tool dispatch paths).
+
+Constraints (do not violate):
+
+- No `langchain` / `langgraph` runtime dependency. Evolve our internal runtime
+  with LangGraph-style ideas instead (explicit state transitions, depth gate,
+  human-confirmation checkpoints, deterministic tool ownership).
+- Tool execution stays owned by Zotero-Cat; provider-native function calling
+  is read-only for us — we receive `tool_calls`, we never delegate execution.
+- `Zotero.HTTP.request` remains the only HTTP entry point.
+- `toolProtocol.ts` (MCP/OpenAI-compatible tool contract) is the existing
+  foundation. Do not duplicate.
+
+### Foundation modules
+
+- [x] `src/modules/agent/functionCalling/errors.ts` — relocate
+      `ToolsNotSupportedError` and `ReasoningContentRequiredError` from
+      `provider.ts`; add `MaxToolDepthExceededError`. `provider.ts` re-exports
+      for backward compatibility.
+- [x] `src/modules/agent/functionCalling/quirks.ts` — `ProviderQuirks` type
+      and per-endpoint registry; replaces the
+      `nativeToolsUnsupportedEndpoints` / `reasoningContentEchoEndpoints`
+      sets scattered across `section.ts`. Endpoint key normalization stays
+      consistent with the current `getActiveEndpointKey()`.
+- [x] `src/modules/agent/functionCalling/messageShape.ts` — move
+      `serializeChatMessage` and `buildRequestPayload` logic here so quirks
+      (e.g. `reasoningContentEmptyPolicy: "empty" | "omit" | "space"`) are
+      applied once, in one place. `provider.ts` becomes thinner.
+- [~] `src/modules/agent/functionCalling/types.ts` — superseded for now:
+  the single-turn runner exports `RunAssistantTurnInput` /
+  `AssistantTurnReply` inline. Re-introduce a dedicated `types.ts` once a
+  multi-turn loop lands and there is more than one consumer.
+
+### Runner
+
+- [x] `src/modules/agent/functionCalling/runner.ts` implementing
+      `runAssistantTurn`. Pure logic, no Zotero UI imports. Scope is
+      intentionally single-turn for now: tool execution and multi-turn
+      follow-up live in `section.ts` because they own UI state and the
+      pause-for-user-confirmation lifecycle.
+- [ ] Unify native (`tool_calls`) and text-mode JSON paths inside the runner:
+      both should produce a normalized `AssistantTurn` with optional
+      `toolCalls`. Today the text-mode JSON detection still happens inside
+      `section.ts` mid-stream. Defer to the multi-turn loop refactor.
+- [ ] Make `MAX_TOOL_CHAIN_DEPTH` a runner parameter, not a magic constant.
+      Surface depth exhaustion through `MaxToolDepthExceededError` (UI then
+      maps it to a visible message). Defer until multi-turn loop lands.
+- [x] Self-recovery for known quirks: catch `ReasoningContentRequiredError`
+      and `ToolsNotSupportedError`, remember the endpoint quirk via the
+      central registry, retry once with the updated quirks. No silent retries
+      beyond that — every recovery emits one diagnostic event.
+
+### Migration
+
+- [x] Migrate `section.ts` `runChatAttempt` to call `runAssistantTurn`.
+      Quirk-recovery retry is delegated; section.ts only logs the diagnostic
+      and resets the in-flight bubble through `onDiagnostic`.
+      `continueAfterAssistantToolAction` and `continueAfterNativeToolCalls`
+      stay in `section.ts` for now because they orchestrate UI state and the
+      proposal-batch confirmation gate.
+- [ ] After migration, `section.ts` should drop below ~2,500 lines and stop
+      importing provider quirks state directly. Currently still ~3,900 lines:
+      tool follow-up orchestration is still inline. Address as a follow-up.
+
+### Companion bug fixes (do alongside migration)
+
+- [x] `conversationRuntime.ts:184` no longer filters out assistant messages
+      whose content is empty but who carry `toolCalls`, and also propagates
+      `toolCalls` / `toolCallId` / `toolName` into the provider payload.
+- [x] Strengthen the DeepSeek-V4-Thinking quirk: default
+      `reasoningContentEmptyPolicy` to `"space"` for endpoints whose host
+      matches `api.deepseek.com` (single space sidesteps both empty-string
+      and missing-field validation paths in the observed relays).
+- [x] Persist tool results into `conversation.messages` so multi-turn
+      replays send a well-formed `[assistant{tool_calls}, tool, ...]`
+      sequence. `section.ts` now calls `appendToolResultMessage(...)` for
+      every read tool as it finishes, for write tools after the proposal
+      batch resolves in `applyBatchAndContinue`, and for unrecognized /
+      write-unavailable tool calls in the immediate follow-up path.
+      `conversationRuntime.toProviderMessages` applies
+      `sanitizeToolCallSequences` as a defensive last-line guard for
+      cancellation paths that still leave an orphan `assistant.toolCalls`.
+      Fixes DeepSeek 400 "insufficient tool messages following tool_calls
+      message" on the next user turn after a tool round-trip.
+
+### Tests
+
+- [x] `test/function-calling-runner.test.ts` — happy path,
+      ReasoningContentRequiredError recovery, ToolsNotSupportedError
+      recovery, native → text-mode fallback, host-default propagation.
+- [x] `test/function-calling-quirks.test.ts` — endpoint key normalization,
+      hot-add quirks, per-host defaults (DeepSeek).
+- [x] `test/function-calling-message-shape.test.ts` — assistant `tool_calls`
+      round-trip with `reasoning_content` echo, system / user / tool message
+      shape, empty-policy variants.
+- [x] `test/conversation-runtime.test.ts` — `sanitizeToolCallSequences`
+      cases: orphan `toolCalls` stripped (prose preserved / dropped when
+      empty), partial `tool_call_id` coverage rejected, stray
+      `role: "tool"` messages dropped, well-formed sequences kept.
+
+### Future (Phase 8 candidate, not in this phase)
+
+- [ ] Spike `@modelcontextprotocol/sdk` inside the Zotero XPI; if it loads
+      cleanly under XPCOM, adopt it for tool spec definition. Until the
+      spike passes, keep the lightweight contract in `toolProtocol.ts`.
+- [ ] Multi-turn `runFunctionCallingLoop` that owns tool execution and the
+      depth gate; collapses `continueAfterAssistantToolAction` /
+      `continueAfterNativeToolCalls` into a single state machine and pushes
+      `MAX_TOOL_CHAIN_DEPTH` into runner config. UI keeps the human-in-the-
+      loop pause for write-action proposals.
+- [ ] Resumable tool checkpoints across plugin restart.
+
 ## Backlog
 
 These are useful but not part of the current release path.

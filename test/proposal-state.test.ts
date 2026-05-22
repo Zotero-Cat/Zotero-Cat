@@ -14,6 +14,7 @@ import {
   summarizeBatch,
 } from "../src/modules/agent/annotationProposals";
 import {
+  annotationRepairTestUtils,
   buildFailedAnnotationRepairPrompt,
   shouldRepairFailedAnnotationBatch,
 } from "../src/modules/agent/annotationRepair";
@@ -100,6 +101,56 @@ describe("annotation proposals state machine", function () {
     assert.include(prompt, "cross-page");
     assert.include(prompt, "hello world");
     assert.include(prompt, "propose_annotation");
+  });
+
+  it("collects repair targets only from highlight/underline locate failures", function () {
+    const batch = createBatch("conv1", 3, [
+      {
+        ...SAMPLE,
+        status: "failed",
+        errorMessage: "Could not locate the quoted text in the PDF.",
+      },
+      {
+        ...SAMPLE,
+        resolved: { ...SAMPLE.resolved, type: "note", pageIndex: 5 },
+        status: "failed",
+        errorMessage: "Could not locate the quoted text in the PDF.",
+      },
+      {
+        ...SAMPLE,
+        attachmentID: 99,
+        resolved: { ...SAMPLE.resolved, pageIndex: 7 },
+        status: "failed",
+        errorMessage: "Multiple PDF attachments found.",
+      },
+      {
+        ...SAMPLE,
+        resolved: { ...SAMPLE.resolved, pageIndex: 8 },
+        status: "pending",
+      },
+    ]);
+    const targets = annotationRepairTestUtils.collectRepairTargets(batch);
+    // Only the highlight + "could not locate" entry survives.
+    assert.equal(targets.size, 1);
+    const pages = targets.get(42);
+    assert.isDefined(pages);
+    assert.deepEqual([...(pages || [])], [2]);
+  });
+
+  it("expands the repair page neighborhood by one on each side and clamps", function () {
+    const { expandPageNeighborhood } = annotationRepairTestUtils;
+    assert.deepEqual(
+      [...expandPageNeighborhood(new Set([0, 3]), 5)].sort((a, b) => a - b),
+      [0, 1, 2, 3, 4],
+    );
+    assert.deepEqual(
+      [...expandPageNeighborhood(new Set([0]), 1)].sort((a, b) => a - b),
+      [0],
+    );
+    assert.deepEqual(
+      [...expandPageNeighborhood(new Set([4]), 5)].sort((a, b) => a - b),
+      [3, 4],
+    );
   });
 
   it("groups approval by operation and annotation type", function () {

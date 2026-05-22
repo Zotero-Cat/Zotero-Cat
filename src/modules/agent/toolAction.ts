@@ -77,6 +77,30 @@ export function getToolActionHandler(type: string): ToolActionHandler | null {
   return handlers.get(type) || null;
 }
 
+export function buildToolActionFromNativeCall(
+  name: string,
+  argumentsJSON: string,
+): ToolAction | null {
+  const normalized = normalizeActionName(name || "");
+  if (!normalized) {
+    return null;
+  }
+  let actionInput: unknown = {};
+  const raw = (argumentsJSON || "").trim();
+  if (raw) {
+    try {
+      actionInput = JSON.parse(raw);
+    } catch {
+      actionInput = { query: raw };
+    }
+  }
+  const record: Record<string, unknown> = {
+    action: normalized,
+    action_input: isRecord(actionInput) ? actionInput : { value: actionInput },
+  };
+  return toToolAction(record);
+}
+
 export function parseAssistantToolActions(content: string): ToolAction[] {
   const records = collectToolActionRecords(content);
   const seen = new Set<string>();

@@ -2,20 +2,63 @@ import { getPref, setPref } from "../../utils/prefs";
 import { getString } from "../../utils/locale";
 import { getProviderApiKey } from "./secureApiKey";
 import { truncateInline } from "../../utils/text";
-import type { AgentMessage } from "./types";
+import type { AgentMessage, AssistantToolCall } from "./types";
 import type { ReasoningEffortValue } from "./modelMetadata";
+import {
+  ReasoningContentRequiredError,
+  ToolsNotSupportedError,
+} from "./functionCalling/errors";
+import {
+  defaultProviderQuirks,
+  type ProviderQuirks,
+} from "./functionCalling/quirks";
+import { serializeMessageForChat } from "./functionCalling/messageShape";
 
-export type { AgentMessage, AgentRole } from "./types";
+export type { AgentMessage, AgentRole, AssistantToolCall } from "./types";
+export {
+  ReasoningContentRequiredError,
+  ToolsNotSupportedError,
+} from "./functionCalling/errors";
+
+export interface ChatToolSpec {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: unknown;
+    strict?: boolean;
+  };
+}
+
+export type ChatToolChoice = "auto" | "none" | "required";
+
+export interface ChatResult {
+  content: string;
+  toolCalls: AssistantToolCall[];
+  finishReason: string;
+  reasoningContent?: string;
+}
 
 export interface ChatProvider {
   readonly id: string;
-  chat(messages: AgentMessage[], options?: ChatOptions): Promise<string>;
+  chat(messages: AgentMessage[], options?: ChatOptions): Promise<ChatResult>;
 }
 
 export interface ChatOptions {
   onCanceller?(cancel: () => void): void;
   onStreamDelta?(delta: string): void;
+  onToolCallStarted?(toolCall: { id: string; name: string }): void;
   reasoningEffort?: ReasoningEffortSetting;
+  tools?: ChatToolSpec[];
+  toolChoice?: ChatToolChoice;
+  // Preferred: pass the full ProviderQuirks resolved from the central
+  // registry. The function-calling runner is responsible for keeping it
+  // up-to-date as endpoints reveal their non-standard behaviors.
+  quirks?: ProviderQuirks;
+  // Deprecated alias for `quirks.echoReasoningContent`. New callers should
+  // pass `quirks` directly; this is kept so the legacy test-utility surface
+  // and any in-flight callers do not break in this refactor.
+  echoReasoningContent?: boolean;
 }
 
 interface ProviderSettings {
@@ -25,8 +68,18 @@ interface ProviderSettings {
   openaiApiKey: string;
 }
 
+interface OpenAIToolCallPart {
+  id?: string;
+  type?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
 interface OpenAIChatResponse {
   choices?: Array<{
+    finish_reason?: string;
     message?: {
       content?:
         | string
@@ -34,6 +87,8 @@ interface OpenAIChatResponse {
             type?: string;
             text?: string;
           }>;
+      tool_calls?: OpenAIToolCallPart[];
+      reasoning_content?: string;
     };
   }>;
   error?: {
@@ -130,7 +185,10 @@ class OpenAICompatibleProvider implements ChatProvider {
 
   constructor(private readonly settings: ProviderSettings) {}
 
-  async chat(messages: AgentMessage[], options?: ChatOptions): Promise<string> {
+  async chat(
+    messages: AgentMessage[],
+    options?: ChatOptions,
+  ): Promise<ChatResult> {
     const normalizedAPIKey = normalizeAuthKey(this.settings.openaiApiKey);
     if (
       isApiKeyRequiredForProvider(this.settings.provider) &&
@@ -154,6 +212,13 @@ class OpenAICompatibleProvider implements ChatProvider {
     const rememberedHint = readEndpointHint(this.settings.provider, endpoint);
     const attempts = buildEndpointAttempts(endpoint, rememberedHint);
     const reasoningEffort = options?.reasoningEffort || "default";
+    const requestTools = options?.tools?.length ? options.tools : undefined;
+    const requestToolChoice =
+      requestTools && options?.toolChoice ? options.toolChoice : undefined;
+    const effectiveQuirks: ProviderQuirks = options?.quirks ?? {
+      ...defaultProviderQuirks(),
+      echoReasoningContent: options?.echoReasoningContent === true,
+    };
     let lastError: Error | null = null;
     for (const [index, attempt] of attempts.entries()) {
       const payloads = buildPayloadVariants(
@@ -162,10 +227,16 @@ class OpenAICompatibleProvider implements ChatProvider {
         attempt.wireAPI,
         attempt.stream,
         reasoningEffort,
+        requestTools,
+        requestToolChoice,
+        effectiveQuirks,
       );
       let attemptError: Error | null = null;
       for (const [payloadIndex, payload] of payloads.entries()) {
-        const streamCollector = createStreamCollector(options?.onStreamDelta);
+        const streamCollector = createStreamCollector({
+          onTextDelta: options?.onStreamDelta,
+          onToolCallStarted: options?.onToolCallStarted,
+        });
         const watchdog = createResponseIdleWatchdog(
           CHAT_RESPONSE_IDLE_TIMEOUT_MS,
         );
@@ -203,33 +274,69 @@ class OpenAICompatibleProvider implements ChatProvider {
           });
           watchdog.clear();
           streamCollector.finalize();
-          const streamedOutput = streamCollector.getText().trim();
-          if (streamedOutput) {
+          const streamedToolCalls = streamCollector.getToolCalls();
+          const streamedText = streamCollector.getText().trim();
+          const streamedFinish = streamCollector.getFinishReason();
+          const streamedReasoning = streamCollector.getReasoningContent();
+          if (streamedText || streamedToolCalls.length) {
             rememberEndpointHint(this.settings.provider, endpoint, {
               endpoint: attempt.endpoint,
               wireAPI: attempt.wireAPI,
               stream: true,
             });
-            return streamedOutput;
+            return {
+              content: streamedText,
+              toolCalls: streamedToolCalls,
+              finishReason: streamedFinish || "stop",
+              reasoningContent: streamedReasoning || undefined,
+            };
           }
           const responseText = request.responseText || "";
           const response = parseChatResponseJSON(responseText, request);
           if (response.error?.message) {
+            if (
+              requestTools &&
+              isToolsUnsupportedErrorMessage(response.error.message)
+            ) {
+              throw new ToolsNotSupportedError(response.error.message);
+            }
+            if (
+              isReasoningContentRequiredErrorMessage(response.error.message)
+            ) {
+              throw new ReasoningContentRequiredError(response.error.message);
+            }
             throw new Error(response.error.message);
           }
           const output = extractContent(response);
-          if (output) {
+          const responseToolCalls = extractResponseToolCalls(response);
+          const responseFinish = extractFinishReason(response);
+          const responseReasoning = extractResponseReasoningContent(response);
+          if (output || responseToolCalls.length) {
             rememberEndpointHint(this.settings.provider, endpoint, {
               endpoint: attempt.endpoint,
               wireAPI: attempt.wireAPI,
               stream: true,
             });
-            return output;
+            return {
+              content: output,
+              toolCalls: responseToolCalls,
+              finishReason: responseFinish || "stop",
+              reasoningContent: responseReasoning || undefined,
+            };
           }
           throw new Error(getString("agent-error-empty-response"));
         } catch (error) {
           const normalizedError = watchdog.getTimeoutError() || toError(error);
           watchdog.clear();
+          if (
+            requestTools &&
+            isToolsUnsupportedErrorMessage(normalizedError.message)
+          ) {
+            throw new ToolsNotSupportedError(normalizedError.message);
+          }
+          if (isReasoningContentRequiredErrorMessage(normalizedError.message)) {
+            throw new ReasoningContentRequiredError(normalizedError.message);
+          }
           if (
             shouldRetryWithoutReasoning(
               normalizedError,
@@ -324,13 +431,19 @@ function buildRequestPayload(
   wireAPI: WireAPI,
   stream: boolean,
   reasoningEffort: ReasoningEffortSetting,
+  tools?: ChatToolSpec[],
+  toolChoice?: ChatToolChoice,
+  quirks: ProviderQuirks = defaultProviderQuirks(),
 ) {
   if (wireAPI === "responses") {
     const payload: Record<string, unknown> = {
       model,
       input: messages.map((message) => ({
-        role: message.role,
-        content: message.content,
+        role: message.role === "tool" ? "user" : message.role,
+        content:
+          message.role === "tool"
+            ? formatToolMessageForResponses(message)
+            : message.content,
       })),
     };
     if (stream) {
@@ -341,16 +454,24 @@ function buildRequestPayload(
   }
   const payload: Record<string, unknown> = {
     model,
-    messages: messages.map((message) => ({
-      role: message.role,
-      content: message.content,
-    })),
+    messages: messages.map((message) =>
+      serializeMessageForChat(message, { quirks }),
+    ),
   };
   if (stream) {
     payload.stream = true;
   }
+  if (tools && tools.length) {
+    payload.tools = tools;
+    payload.tool_choice = toolChoice || "auto";
+  }
   applyReasoningEffortToPayload(payload, wireAPI, reasoningEffort);
   return payload;
+}
+
+function formatToolMessageForResponses(message: AgentMessage): string {
+  const label = message.toolName ? `[tool:${message.toolName}]` : "[tool]";
+  return `${label}\n${message.content || ""}`.trim();
 }
 
 function buildPayloadVariants(
@@ -359,6 +480,9 @@ function buildPayloadVariants(
   wireAPI: WireAPI,
   stream: boolean,
   reasoningEffort: ReasoningEffortSetting,
+  tools?: ChatToolSpec[],
+  toolChoice?: ChatToolChoice,
+  quirks: ProviderQuirks = defaultProviderQuirks(),
 ) {
   const withReasoning = buildRequestPayload(
     messages,
@@ -366,6 +490,9 @@ function buildPayloadVariants(
     wireAPI,
     stream,
     reasoningEffort,
+    tools,
+    toolChoice,
+    quirks,
   );
   if (reasoningEffort === "default") {
     return [withReasoning];
@@ -376,6 +503,9 @@ function buildPayloadVariants(
     wireAPI,
     stream,
     "default",
+    tools,
+    toolChoice,
+    quirks,
   );
   return [withReasoning, withoutReasoning];
 }
@@ -690,6 +820,15 @@ interface StreamCollector {
   attach(xhr: XMLHttpRequest, onProgress?: () => void): void;
   finalize(): void;
   getText(): string;
+  getToolCalls(): AssistantToolCall[];
+  getFinishReason(): string;
+  getReasoningContent(): string;
+  consumeEvent(payload: Record<string, unknown>): void;
+}
+
+interface StreamCollectorOptions {
+  onTextDelta?: (delta: string) => void;
+  onToolCallStarted?: (toolCall: { id: string; name: string }) => void;
 }
 
 interface ResponseIdleWatchdog {
@@ -767,12 +906,19 @@ function createResponseIdleWatchdog(timeoutMs: number): ResponseIdleWatchdog {
 }
 
 function createStreamCollector(
-  onDelta?: (delta: string) => void,
+  options: StreamCollectorOptions = {},
 ): StreamCollector {
   let consumedLength = 0;
   let lineBuffer = "";
   let dataLines: string[] = [];
   let fullText = "";
+  let reasoningContent = "";
+  let finishReason = "";
+  const toolCallsByIndex = new Map<
+    number,
+    { id: string; name: string; arguments: string; announced: boolean }
+  >();
+  const toolCallOrder: number[] = [];
 
   function pushChunk(chunk: string) {
     lineBuffer += chunk;
@@ -811,14 +957,77 @@ function createStreamCollector(
     }
     try {
       const json = JSON.parse(payload) as Record<string, unknown>;
-      const delta = extractStreamDelta(json);
-      if (!delta) {
-        return;
-      }
-      fullText += delta;
-      onDelta?.(delta);
+      consumePayload(json);
     } catch {
       // Ignore non-JSON SSE payload fragments.
+    }
+  }
+
+  function consumePayload(json: Record<string, unknown>) {
+    const reason = readFinishReason(json);
+    if (reason) {
+      finishReason = reason;
+    }
+    accumulateToolCallDelta(json);
+    const reasoningDelta = extractReasoningDelta(json);
+    if (reasoningDelta) {
+      reasoningContent += reasoningDelta;
+    }
+    const delta = extractStreamDelta(json);
+    if (!delta) {
+      return;
+    }
+    fullText += delta;
+    options.onTextDelta?.(delta);
+  }
+
+  function accumulateToolCallDelta(payload: Record<string, unknown>) {
+    const choices = payload.choices;
+    if (!Array.isArray(choices) || !choices.length) {
+      return;
+    }
+    const firstChoice = choices[0] as { delta?: unknown };
+    const delta = firstChoice.delta as
+      | { tool_calls?: OpenAIToolCallPart[] | undefined }
+      | undefined;
+    const parts = delta?.tool_calls;
+    if (!Array.isArray(parts) || !parts.length) {
+      return;
+    }
+    for (const part of parts) {
+      const partIndex = readToolCallIndex(part);
+      if (partIndex === null) {
+        continue;
+      }
+      let entry = toolCallsByIndex.get(partIndex);
+      if (!entry) {
+        entry = { id: "", name: "", arguments: "", announced: false };
+        toolCallsByIndex.set(partIndex, entry);
+        toolCallOrder.push(partIndex);
+      }
+      if (typeof part.id === "string" && part.id) {
+        entry.id = part.id;
+      }
+      const fn = part.function;
+      if (fn) {
+        if (typeof fn.name === "string" && fn.name) {
+          entry.name = fn.name;
+        }
+        if (typeof fn.arguments === "string") {
+          entry.arguments += fn.arguments;
+        }
+      }
+      if (!entry.announced && entry.name) {
+        entry.announced = true;
+        try {
+          options.onToolCallStarted?.({
+            id: entry.id || `call-${partIndex}`,
+            name: entry.name,
+          });
+        } catch {
+          // subscribers must not break stream parsing
+        }
+      }
     }
   }
 
@@ -844,7 +1053,148 @@ function createStreamCollector(
     getText() {
       return fullText;
     },
+    getToolCalls() {
+      const calls: AssistantToolCall[] = [];
+      for (const index of toolCallOrder) {
+        const entry = toolCallsByIndex.get(index);
+        if (!entry || !entry.name) {
+          continue;
+        }
+        calls.push({
+          id: entry.id || `call-${index}`,
+          name: entry.name,
+          arguments: entry.arguments || "{}",
+        });
+      }
+      return calls;
+    },
+    getFinishReason() {
+      return finishReason;
+    },
+    getReasoningContent() {
+      return reasoningContent;
+    },
+    consumeEvent(payload: Record<string, unknown>) {
+      consumePayload(payload);
+    },
   };
+}
+
+function readToolCallIndex(part: OpenAIToolCallPart & { index?: unknown }) {
+  const index = (part as { index?: unknown }).index;
+  if (typeof index === "number" && Number.isFinite(index)) {
+    return Math.floor(index);
+  }
+  if (typeof index === "string" && /^\d+$/.test(index)) {
+    return Number.parseInt(index, 10);
+  }
+  return null;
+}
+
+function readFinishReason(payload: Record<string, unknown>): string {
+  const choices = payload.choices;
+  if (Array.isArray(choices) && choices.length) {
+    const reason = (choices[0] as { finish_reason?: unknown }).finish_reason;
+    if (typeof reason === "string" && reason) {
+      return reason;
+    }
+  }
+  return "";
+}
+
+function extractResponseToolCalls(
+  response: OpenAIChatResponse,
+): AssistantToolCall[] {
+  const message = response.choices?.[0]?.message;
+  const parts = message?.tool_calls;
+  if (!Array.isArray(parts) || !parts.length) {
+    return [];
+  }
+  const calls: AssistantToolCall[] = [];
+  for (const [index, part] of parts.entries()) {
+    const name = part.function?.name;
+    if (!name) {
+      continue;
+    }
+    calls.push({
+      id: part.id || `call-${index}`,
+      name,
+      arguments:
+        typeof part.function?.arguments === "string"
+          ? part.function.arguments
+          : "{}",
+    });
+  }
+  return calls;
+}
+
+function extractFinishReason(response: OpenAIChatResponse): string {
+  const reason = response.choices?.[0]?.finish_reason;
+  return typeof reason === "string" ? reason : "";
+}
+
+function extractResponseReasoningContent(response: OpenAIChatResponse): string {
+  const message = response.choices?.[0]?.message;
+  const value = (message as { reasoning_content?: unknown })?.reasoning_content;
+  return typeof value === "string" ? value : "";
+}
+
+function extractReasoningDelta(payload: Record<string, unknown>): string {
+  const choices = payload.choices;
+  if (Array.isArray(choices) && choices.length) {
+    const firstChoice = choices[0] as { delta?: unknown; message?: unknown };
+    const delta = firstChoice.delta as
+      | { reasoning_content?: unknown }
+      | undefined;
+    const value = delta?.reasoning_content;
+    if (typeof value === "string" && value) {
+      return value;
+    }
+    // Some relays emit the field on the synthesized non-stream "message"
+    // shape inside a streamed final event.
+    const message = firstChoice.message as
+      | { reasoning_content?: unknown }
+      | undefined;
+    const messageValue = message?.reasoning_content;
+    if (typeof messageValue === "string" && messageValue) {
+      return messageValue;
+    }
+  }
+  return "";
+}
+
+function isReasoningContentRequiredErrorMessage(message: string): boolean {
+  const lower = (message || "").toLowerCase();
+  if (!lower.includes("reasoning_content")) {
+    return false;
+  }
+  return (
+    lower.includes("must be passed") ||
+    lower.includes("must be returned") ||
+    lower.includes("required") ||
+    lower.includes("missing") ||
+    lower.includes("缺失") ||
+    lower.includes("必须")
+  );
+}
+
+function isToolsUnsupportedErrorMessage(message: string): boolean {
+  const lower = (message || "").toLowerCase();
+  if (!lower) {
+    return false;
+  }
+  if (!lower.includes("tool")) {
+    return false;
+  }
+  return (
+    lower.includes("unsupported") ||
+    lower.includes("not support") ||
+    lower.includes("not allowed") ||
+    lower.includes("unknown parameter") ||
+    lower.includes("unrecognized") ||
+    lower.includes("invalid") ||
+    lower.includes("unexpected")
+  );
 }
 
 function extractStreamDelta(payload: Record<string, unknown>) {
@@ -950,6 +1300,8 @@ export const providerTestUtils = {
     wireAPI: WireAPI,
     reasoningEffort: ReasoningEffortSetting,
     stream = false,
+    tools?: ChatToolSpec[],
+    toolChoice?: ChatToolChoice,
   ) {
     return buildPayloadVariants(
       [{ role: "user", content: "test" }],
@@ -957,6 +1309,48 @@ export const providerTestUtils = {
       wireAPI,
       stream,
       reasoningEffort,
+      tools,
+      toolChoice,
     );
   },
+  buildChatPayload(
+    messages: AgentMessage[],
+    tools?: ChatToolSpec[],
+    toolChoice?: ChatToolChoice,
+    echoReasoningContent: boolean = false,
+  ) {
+    return buildRequestPayload(
+      messages,
+      "test-model",
+      "chat-completions",
+      false,
+      "default",
+      tools,
+      toolChoice,
+      { ...defaultProviderQuirks(), echoReasoningContent },
+    );
+  },
+  parseStreamEvents(events: Record<string, unknown>[]) {
+    const collector = createStreamCollector();
+    for (const event of events) {
+      collector.consumeEvent(event);
+    }
+    return {
+      text: collector.getText(),
+      toolCalls: collector.getToolCalls(),
+      finishReason: collector.getFinishReason(),
+      reasoningContent: collector.getReasoningContent(),
+    };
+  },
+  extractResponseToolCalls(response: OpenAIChatResponse) {
+    return extractResponseToolCalls(response);
+  },
+  extractFinishReason(response: OpenAIChatResponse) {
+    return extractFinishReason(response);
+  },
+  extractResponseReasoningContent(response: OpenAIChatResponse) {
+    return extractResponseReasoningContent(response);
+  },
+  isToolsUnsupportedErrorMessage,
+  isReasoningContentRequiredErrorMessage,
 };

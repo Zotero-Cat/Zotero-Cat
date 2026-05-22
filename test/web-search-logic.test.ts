@@ -413,14 +413,19 @@ describe("web search logic", function () {
   });
 
   it("should expose registered tools as OpenAI and MCP compatible specs", function () {
+    // Wire names prefer the underscored alias to match what the provider
+    // expects in `tool_calls`.
     const openai = getOpenAIToolSpecs().find(
-      (tool) => tool.function.name === "schema-test-tool",
+      (tool) => tool.function.name === "schema_test_tool",
     );
     assert.equal(openai?.type, "function");
-    assert.equal(openai?.function.parameters.type, "object");
+    assert.equal(
+      (openai?.function.parameters as { type?: string } | undefined)?.type,
+      "object",
+    );
 
     const mcp = getMCPToolSpecs().find(
-      (tool) => tool.name === "schema-test-tool",
+      (tool) => tool.name === "schema_test_tool",
     );
     assert.equal(mcp?.inputSchema.type, "object");
     assert.include(mcp?.description, "schema");

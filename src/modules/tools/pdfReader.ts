@@ -420,6 +420,52 @@ export function findTextRects(
   if (!normalizedQuery) {
     return null;
   }
+  const direct = searchPages(pages, targetPageIndex, normalizedQuery, options);
+  if (direct) {
+    return direct;
+  }
+  // Some models (notably glm-4.5-air) abbreviate quotes with a trailing
+  // ellipsis instead of copying the full span. After normalization `…` and
+  // `...` both end up as `...`, so we detect the abbreviation marker, strip
+  // it, and retry with the prefix. The 20-char floor guards against matching
+  // a too-generic prefix that happens to occur on the page.
+  const trimmed = stripTrailingEllipsis(normalizedQuery);
+  if (trimmed) {
+    const fromEllipsis = searchPages(pages, targetPageIndex, trimmed, options);
+    if (fromEllipsis) {
+      return fromEllipsis;
+    }
+  }
+  // Last resort: models sometimes splice short verbatim phrases together with
+  // their own connective wording. Direct/prefix matching fails because the
+  // connective bits don't appear verbatim in the PDF, but the verbatim islands
+  // do. When the caller pinned a page, look for the longest contiguous
+  // substring of the normalized query that appears verbatim on that page. The
+  // 40-char floor keeps this from latching onto generic 1-2 word fragments.
+  if (
+    typeof targetPageIndex !== "number" ||
+    !Number.isFinite(targetPageIndex)
+  ) {
+    return null;
+  }
+  const candidateOrder = options.strictPage
+    ? pages.filter((page) => page.pageIndex === targetPageIndex)
+    : buildSearchOrder(pages, targetPageIndex);
+  for (const page of candidateOrder) {
+    const match = matchPageByLongestCommonSubstring(page, normalizedQuery);
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function searchPages(
+  pages: ExtractedPage[],
+  targetPageIndex: number | null | undefined,
+  normalizedQuery: string,
+  options: FindTextRectsOptions,
+): ResolvedRects | null {
   if (
     typeof targetPageIndex !== "number" ||
     !Number.isFinite(targetPageIndex)
@@ -447,6 +493,109 @@ export function findTextRects(
     }
   }
   return null;
+}
+
+const MIN_ELLIPSIS_FALLBACK_PREFIX = 20;
+const MIN_LCS_FALLBACK_LEN = 40;
+
+function matchPageByLongestCommonSubstring(
+  page: ExtractedPage,
+  normalizedQuery: string,
+): ResolvedRects | null {
+  if (!page.spans.length) {
+    return null;
+  }
+  const { normalizedText, spanIndexMap } = buildNormalizedIndex(page.spans);
+  if (!normalizedText) {
+    return null;
+  }
+  const { textStart, length } = findLongestCommonSubstring(
+    normalizedQuery,
+    normalizedText,
+  );
+  if (length < MIN_LCS_FALLBACK_LEN) {
+    return null;
+  }
+  const endIdx = textStart + length;
+  const startSpan = spanIndexMap[textStart];
+  const endSpan = spanIndexMap[endIdx - 1];
+  if (startSpan === undefined || endSpan === undefined) {
+    return null;
+  }
+  const rects = mergeSpanRects(
+    page.spans.slice(startSpan, endSpan + 1),
+    page.pageHeight,
+  );
+  const matchedText = page.spans
+    .slice(startSpan, endSpan + 1)
+    .map((span) => span.text)
+    .join("");
+  return {
+    pageIndex: page.pageIndex,
+    pageLabel: page.pageLabel,
+    rects,
+    matchedText,
+  };
+}
+
+function findLongestCommonSubstring(
+  query: string,
+  text: string,
+): { queryStart: number; textStart: number; length: number } {
+  const m = query.length;
+  const n = text.length;
+  if (m === 0 || n === 0) {
+    return { queryStart: 0, textStart: 0, length: 0 };
+  }
+  // Rolling two-row DP keeps memory at O(n) — text can be a few thousand chars,
+  // query is bounded by the model's 240-char quoted-text cap, so this stays
+  // well under a millisecond per page.
+  let prev = new Uint32Array(n + 1);
+  let curr = new Uint32Array(n + 1);
+  let bestLen = 0;
+  let bestQueryEnd = 0;
+  let bestTextEnd = 0;
+  for (let i = 1; i <= m; i += 1) {
+    const qChar = query.charCodeAt(i - 1);
+    for (let j = 1; j <= n; j += 1) {
+      if (qChar === text.charCodeAt(j - 1)) {
+        const len = prev[j - 1] + 1;
+        curr[j] = len;
+        if (len > bestLen) {
+          bestLen = len;
+          bestQueryEnd = i;
+          bestTextEnd = j;
+        }
+      } else {
+        curr[j] = 0;
+      }
+    }
+    const swap = prev;
+    prev = curr;
+    curr = swap;
+    curr.fill(0);
+  }
+  return {
+    queryStart: bestQueryEnd - bestLen,
+    textStart: bestTextEnd - bestLen,
+    length: bestLen,
+  };
+}
+
+function stripTrailingEllipsis(normalized: string): string | null {
+  // normalizeForMatching collapses whitespace and converts `…` to `...`, so
+  // detecting a trailing run of 3+ dots is sufficient to spot both forms.
+  if (!/\.{3,}$/.test(normalized)) {
+    return null;
+  }
+  const trimmed = normalized.replace(/\s*\.{3,}\s*$/u, "").trimEnd();
+  if (!trimmed || trimmed === normalized) {
+    return null;
+  }
+  if (trimmed.length < MIN_ELLIPSIS_FALLBACK_PREFIX) {
+    return null;
+  }
+  return trimmed;
 }
 
 function buildSearchOrder(
@@ -522,26 +671,112 @@ function buildNormalizedIndex(spans: ExtractedTextSpan[]): {
   spanIndexMap: number[];
 } {
   const pieces: string[] = [];
-  const spanIndexMap: number[] = [];
+  const rawMap: number[] = [];
   spans.forEach((span, spanIndex) => {
-    const normalized = collapseWhitespace(span.text).toLowerCase();
+    const normalized = normalizeForMatching(span.text);
     if (!normalized) {
       return;
     }
     pieces.push(normalized);
     for (let i = 0; i < normalized.length; i += 1) {
-      spanIndexMap.push(spanIndex);
+      rawMap.push(spanIndex);
     }
     if (spanIndex < spans.length - 1) {
       pieces.push(" ");
-      spanIndexMap.push(spanIndex);
+      rawMap.push(spanIndex);
     }
   });
-  return { normalizedText: pieces.join(""), spanIndexMap };
+  const rawText = pieces.join("");
+  // Rejoin line-break hyphenation that straddles span boundaries: pdf.js emits
+  // "syn-" and "chronous" as separate items, which we join with " " above,
+  // producing "syn- chronous". Per-span normalization can't see this. Strip the
+  // intervening "-<whitespace>" only when surrounded by word characters so
+  // inline compound hyphens ("anti-pattern", no following space) stay intact.
+  // We keep spanIndexMap aligned by dropping exactly the removed entries.
+  const removals: Array<{ start: number; end: number }> = [];
+  const pattern = /(\w)-(\s+)(\w)/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(rawText)) !== null) {
+    const hyphenAt = m.index + 1;
+    const segmentEnd = hyphenAt + 1 + m[2].length;
+    removals.push({ start: hyphenAt, end: segmentEnd });
+    pattern.lastIndex = segmentEnd;
+  }
+  if (!removals.length) {
+    return { normalizedText: rawText, spanIndexMap: rawMap };
+  }
+  let result = "";
+  const spanIndexMap: number[] = [];
+  let cursor = 0;
+  for (const removal of removals) {
+    while (cursor < removal.start) {
+      result += rawText[cursor];
+      spanIndexMap.push(rawMap[cursor]);
+      cursor += 1;
+    }
+    cursor = removal.end;
+  }
+  while (cursor < rawText.length) {
+    result += rawText[cursor];
+    spanIndexMap.push(rawMap[cursor]);
+    cursor += 1;
+  }
+  return { normalizedText: result, spanIndexMap };
 }
 
 function normalizeQuery(query: string): string {
-  return collapseWhitespace(query).toLowerCase();
+  return normalizeForMatching(query);
+}
+
+// PDF.js often emits Latin ligatures and soft hyphens straight from the
+// source PDF, while models tend to write the decomposed ASCII form. We also
+// see frequent smart-quote / em-dash / ellipsis mismatches: the PDF uses
+// curly quotes from typesetting, the model writes straight ASCII. Both sides
+// must reduce to the same normalized form before `indexOf` runs.
+//
+// Keep the transform restricted to character-level equivalents (no accent
+// stripping, no fuzzy-distance match) so we never silently align a paraphrase
+// to a wrong span.
+const PDF_LIGATURE_MAP: Record<string, string> = {
+  ﬀ: "ff",
+  ﬁ: "fi",
+  ﬂ: "fl",
+  ﬃ: "ffi",
+  ﬄ: "ffl",
+  ﬅ: "st",
+  ﬆ: "st",
+};
+
+function normalizeForMatching(text: string): string {
+  // NFKC unifies compatibility forms: ligatures (ﬁ → fi), full-width punctuation,
+  // and decomposed accented characters collapse to a single canonical form on
+  // both sides of the comparison.
+  let normalized = text.normalize("NFKC");
+  // Strip zero-width formatting chars PDF.js sometimes carries through from
+  // font encoding tables: U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF BOM,
+  // U+2060 WORD JOINER. Spelled as escapes so they remain readable in source.
+  normalized = normalized.replace(/[\u200B-\u200D\uFEFF\u2060]/g, "");
+  normalized = collapseWhitespace(normalized).toLowerCase();
+  // Drop PDF soft hyphens (U+00AD) — line-break artifacts.
+  normalized = normalized.replace(/\u00AD/g, "");
+  // Safety net for Latin ligatures that bypass NFKC's mapping. Redundant for
+  // the standard ﬁ/ﬂ/etc. forms but cheap.
+  normalized = normalized.replace(/[ﬀ-ﬆ]/g, (ch) => PDF_LIGATURE_MAP[ch] || ch);
+  // Normalize typesetters' smart quotes / dashes / ellipsis to their ASCII
+  // equivalents so a model writing `"foo - bar..."` still aligns with a PDF
+  // span containing `"foo — bar…"`.
+  normalized = normalized
+    .replace(/[‘’ʼ‛]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[–—−]/g, "-")
+    .replace(/…/g, "...");
+  // Rejoin words split across a PDF line break: pdf.js emits "syn-" and
+  // "chronous" as two text items, which we glue with a space → "syn- chronous".
+  // Only fire when the hyphen sits between word characters with whitespace on
+  // the right; inline hyphens in compound words ("anti-pattern") have no
+  // following space and are preserved.
+  normalized = normalized.replace(/(\w)-\s+(\w)/g, "$1$2");
+  return normalized;
 }
 
 function mergeSpanRects(
@@ -816,4 +1051,7 @@ export const pdfReaderTestUtils = {
   findTextRects,
   normalizeQuery,
   buildSearchOrder,
+  stripTrailingEllipsis,
+  findLongestCommonSubstring,
+  matchPageByLongestCommonSubstring,
 };

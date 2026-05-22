@@ -7,7 +7,14 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
-No unreleased changes yet.
+### Fixed
+
+- Native `tool_calls` round-trips now persist `role: "tool"` messages into
+  conversation history, so the next user turn no longer replays an orphan
+  `assistant{tool_calls}` and trips strict providers with
+  "insufficient tool messages following tool_calls message" (observed against
+  DeepSeek). `toProviderMessages` also runs a defensive
+  `sanitizeToolCallSequences` pass for cancellation / partial-failure paths.
 
 ## [0.2.0] - 2026-05-19
 

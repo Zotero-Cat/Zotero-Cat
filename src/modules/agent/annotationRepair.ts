@@ -4,6 +4,11 @@ import type {
 } from "./annotationProposals";
 import { summarizeBatch } from "./annotationProposals";
 import { truncate } from "../../utils/text";
+import {
+  extractPages,
+  renderPagesAsText,
+  type ExtractedPage,
+} from "../tools/pdfReader";
 
 interface RepairOptions {
   alreadyRepaired: boolean;
@@ -88,3 +93,114 @@ function formatFailureLine(proposal: AnnotationProposal): string {
   const error = proposal.errorMessage || "unknown error";
   return `- ${proposal.op} ${proposal.resolved.type} p.${page}: ${error}${snippet ? ` | text=${snippet}` : ""}`;
 }
+
+// When a propose_annotation batch fails because we couldn't locate quoted
+// text and the model never called read_pdf, the repair prompt would otherwise
+// say "PDF tool result: unavailable" and the second attempt would be just as
+// blind. Pre-fetch the target pages (plus ±1 to absorb off-by-one page hints)
+// so the model can see what's actually on the page and re-quote verbatim.
+const REPAIR_PAGE_NEIGHBORHOOD = 1;
+
+export async function gatherFailedAnnotationPageText(
+  batch: AnnotationBatch,
+): Promise<string> {
+  const targets = collectRepairTargets(batch);
+  if (!targets.size) {
+    return "";
+  }
+  const sections: string[] = [];
+  for (const [attachmentID, pageIndices] of targets) {
+    const attachment = resolveAttachmentByID(attachmentID);
+    if (!attachment) {
+      continue;
+    }
+    let pages: ExtractedPage[];
+    try {
+      pages = await extractPages(attachment);
+    } catch {
+      continue;
+    }
+    const wanted = expandPageNeighborhood(pageIndices, pages.length);
+    const subset = pages.filter((page) => wanted.has(page.pageIndex));
+    if (!subset.length) {
+      continue;
+    }
+    sections.push(
+      `[attachment ${attachment.key} pages ${describePageList(subset)}]\n${renderPagesAsText(subset)}`,
+    );
+  }
+  return sections.join("\n\n");
+}
+
+function collectRepairTargets(
+  batch: AnnotationBatch,
+): Map<number, Set<number>> {
+  const targets = new Map<number, Set<number>>();
+  for (const proposal of batch.proposals) {
+    if (proposal.status !== "failed" || proposal.op !== "create") {
+      continue;
+    }
+    const type = proposal.resolved.type;
+    if (type !== "highlight" && type !== "underline") {
+      continue;
+    }
+    const error = (proposal.errorMessage || "").toLowerCase();
+    if (
+      !error.includes("could not locate") &&
+      !error.includes("requested page")
+    ) {
+      continue;
+    }
+    let pageIndices = targets.get(proposal.attachmentID);
+    if (!pageIndices) {
+      pageIndices = new Set<number>();
+      targets.set(proposal.attachmentID, pageIndices);
+    }
+    pageIndices.add(Math.max(0, proposal.resolved.pageIndex));
+  }
+  return targets;
+}
+
+function expandPageNeighborhood(
+  pageIndices: Set<number>,
+  pageCount: number,
+): Set<number> {
+  const expanded = new Set<number>();
+  for (const idx of pageIndices) {
+    for (
+      let offset = -REPAIR_PAGE_NEIGHBORHOOD;
+      offset <= REPAIR_PAGE_NEIGHBORHOOD;
+      offset += 1
+    ) {
+      const candidate = idx + offset;
+      if (candidate >= 0 && candidate < pageCount) {
+        expanded.add(candidate);
+      }
+    }
+  }
+  return expanded;
+}
+
+function describePageList(pages: ExtractedPage[]): string {
+  return pages
+    .map((page) => page.pageLabel || String(page.pageIndex + 1))
+    .join(", ");
+}
+
+function resolveAttachmentByID(attachmentID: number): Zotero.Item | null {
+  try {
+    const item = (
+      Zotero as unknown as {
+        Items: { get: (id: number) => Zotero.Item | false };
+      }
+    ).Items.get(attachmentID);
+    return item || null;
+  } catch {
+    return null;
+  }
+}
+
+export const annotationRepairTestUtils = {
+  collectRepairTargets,
+  expandPageNeighborhood,
+};

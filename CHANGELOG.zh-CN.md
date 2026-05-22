@@ -6,7 +6,14 @@
 
 ## [Unreleased]
 
-暂无未发布变更。
+### 修复
+
+- 原生 `tool_calls` 回合现在会把 `role: "tool"` 消息落到会话历史里，
+  下一轮用户提问不会再把孤儿 `assistant{tool_calls}` 重放出去，DeepSeek
+  等严格 provider 也不会再返回
+  "insufficient tool messages following tool_calls message" 的 400。
+  `toProviderMessages` 增加了 `sanitizeToolCallSequences` 兜底，覆盖
+  取消 / 半失败等仍可能留下孤儿 `tool_calls` 的路径。
 
 ## [0.2.0] - 2026-05-19
 

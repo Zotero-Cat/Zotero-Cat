@@ -80,6 +80,198 @@ describe("conversation runtime state", function () {
     ]);
   });
 
+  it("preserves assistant tool_calls even when the visible content is empty", function () {
+    const toolCalls = [{ id: "call_1", name: "read_pdf", arguments: "{}" }];
+    const messages = [
+      { role: "user" as const, content: "open the pdf", createdAt: 1 },
+      {
+        role: "assistant" as const,
+        content: "",
+        createdAt: 2,
+        toolCalls,
+      },
+      {
+        role: "tool" as const,
+        content: "page 1 text",
+        createdAt: 3,
+        toolCallId: "call_1",
+        toolName: "read_pdf",
+      },
+      {
+        role: "assistant" as const,
+        content: "summary",
+        createdAt: 4,
+        reasoningContent: "internal trace",
+      },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "open the pdf" },
+      { role: "assistant", content: "", toolCalls },
+      {
+        role: "tool",
+        content: "page 1 text",
+        toolCallId: "call_1",
+        toolName: "read_pdf",
+      },
+      {
+        role: "assistant",
+        content: "summary",
+        reasoningContent: "internal trace",
+      },
+    ]);
+  });
+
+  it("filters tool-role messages that carry neither content nor toolCallId", function () {
+    const messages = [
+      { role: "user" as const, content: "hi", createdAt: 1 },
+      { role: "tool" as const, content: "   ", createdAt: 2 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "hi" },
+    ]);
+  });
+
+  it("strips orphan toolCalls when matching tool results are missing", function () {
+    // The bug this guards against: assistant emits tool_calls, the user
+    // cancels (or the flow errors out) before tool results are persisted,
+    // and the next user turn replays the assistant tool_calls without
+    // responses — DeepSeek/OpenAI return 400 in that shape.
+    const messages = [
+      { role: "user" as const, content: "do it", createdAt: 1 },
+      {
+        role: "assistant" as const,
+        content: "thinking...",
+        createdAt: 2,
+        toolCalls: [{ id: "call_1", name: "read_pdf", arguments: "{}" }],
+      },
+      { role: "user" as const, content: "never mind", createdAt: 3 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "do it" },
+      { role: "assistant", content: "thinking..." },
+      { role: "user", content: "never mind" },
+    ]);
+  });
+
+  it("drops empty assistant turns whose orphan toolCalls were stripped", function () {
+    const messages = [
+      { role: "user" as const, content: "go", createdAt: 1 },
+      {
+        role: "assistant" as const,
+        content: "",
+        createdAt: 2,
+        toolCalls: [{ id: "call_1", name: "read_pdf", arguments: "{}" }],
+      },
+      { role: "user" as const, content: "stop", createdAt: 3 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "go" },
+      { role: "user", content: "stop" },
+    ]);
+  });
+
+  it("drops orphan tool messages that have no preceding assistant tool_calls", function () {
+    const messages = [
+      { role: "user" as const, content: "hi", createdAt: 1 },
+      {
+        role: "tool" as const,
+        content: "stray result",
+        createdAt: 2,
+        toolCallId: "call_ghost",
+        toolName: "read_pdf",
+      },
+      { role: "assistant" as const, content: "ok", createdAt: 3 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "ok" },
+    ]);
+  });
+
+  it("keeps an assistant tool_calls turn when every tool_call_id has a response", function () {
+    const toolCalls = [
+      { id: "call_1", name: "read_pdf", arguments: "{}" },
+      { id: "call_2", name: "web_search", arguments: '{"query":"hi"}' },
+    ];
+    const messages = [
+      { role: "user" as const, content: "look it up", createdAt: 1 },
+      {
+        role: "assistant" as const,
+        content: "",
+        createdAt: 2,
+        toolCalls,
+      },
+      {
+        role: "tool" as const,
+        content: "page text",
+        createdAt: 3,
+        toolCallId: "call_1",
+        toolName: "read_pdf",
+      },
+      {
+        role: "tool" as const,
+        content: "web result",
+        createdAt: 4,
+        toolCallId: "call_2",
+        toolName: "web_search",
+      },
+      { role: "assistant" as const, content: "done", createdAt: 5 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "look it up" },
+      { role: "assistant", content: "", toolCalls },
+      {
+        role: "tool",
+        content: "page text",
+        toolCallId: "call_1",
+        toolName: "read_pdf",
+      },
+      {
+        role: "tool",
+        content: "web result",
+        toolCallId: "call_2",
+        toolName: "web_search",
+      },
+      { role: "assistant", content: "done" },
+    ]);
+  });
+
+  it("strips toolCalls when only a subset of tool_call_ids has responses", function () {
+    const messages = [
+      { role: "user" as const, content: "two tools", createdAt: 1 },
+      {
+        role: "assistant" as const,
+        content: "checking",
+        createdAt: 2,
+        toolCalls: [
+          { id: "call_1", name: "read_pdf", arguments: "{}" },
+          { id: "call_2", name: "web_search", arguments: '{"query":"hi"}' },
+        ],
+      },
+      {
+        role: "tool" as const,
+        content: "page text",
+        createdAt: 3,
+        toolCallId: "call_1",
+        toolName: "read_pdf",
+      },
+      // call_2 response is missing — entire pairing is invalid.
+      { role: "assistant" as const, content: "fallback", createdAt: 4 },
+    ];
+
+    assert.deepEqual(toProviderMessages(messages), [
+      { role: "user", content: "two tools" },
+      { role: "assistant", content: "checking" },
+      { role: "assistant", content: "fallback" },
+    ]);
+  });
+
   it("checks message pointers without depending on UI runtime", function () {
     assert.isTrue(
       pointsToMessage({ conversationKey: "conv", messageIndex: 2 }, "conv", 2),

@@ -129,6 +129,233 @@ describe("pdf tools logic", function () {
       assert.equal(rects.length, 1);
       assert.deepEqual(rects[0], [10, 200, 40, 210]);
     });
+
+    it("matches when the PDF uses curly quotes and the model writes ASCII", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "“unusual” ‘insight’",
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.matchPage(page, "\"unusual\" 'insight'");
+      assert.isNotNull(match);
+    });
+
+    it("matches em-dash / en-dash / minus to ASCII hyphen", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "chapter 3 — results 1–2 − outliers",
+          x: 0,
+          y: 0,
+          width: 200,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.matchPage(
+        page,
+        "chapter 3 - results 1-2 - outliers",
+      );
+      assert.isNotNull(match);
+    });
+
+    it("matches a Unicode ellipsis to three ASCII dots", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "see appendix…",
+          x: 0,
+          y: 0,
+          width: 60,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.matchPage(page, "see appendix...");
+      assert.isNotNull(match);
+    });
+
+    it("strips soft hyphens used as line-break artifacts", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "discov­ery",
+          x: 0,
+          y: 0,
+          width: 60,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.matchPage(page, "discovery");
+      assert.isNotNull(match);
+    });
+
+    it("decomposes Latin ligatures emitted by PDF extractors", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "the ﬁnding ﬂies ﬀame",
+          x: 0,
+          y: 0,
+          width: 120,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.matchPage(
+        page,
+        "the finding flies ffame",
+      );
+      assert.isNotNull(match);
+    });
+
+    it("rejoins words split across a PDF line break", function () {
+      // pdf.js emits a hyphenated line-break as two text items, which we glue
+      // with a space → "syn- chronous". The model writes "synchronous".
+      const page = makePage(0, 800, [
+        { text: "syn-", x: 0, y: 0, width: 30, height: 10 },
+        { text: "chronous events", x: 30, y: 0, width: 90, height: 10 },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "synchronous events",
+      );
+      assert.isNotNull(match);
+    });
+
+    it("preserves inline compound hyphens", function () {
+      // No whitespace after the hyphen → "anti-pattern" stays as-is.
+      const page = makePage(0, 800, [
+        { text: "the anti-pattern", x: 0, y: 0, width: 90, height: 10 },
+      ]);
+      const exactMatch = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "the anti-pattern",
+      );
+      assert.isNotNull(exactMatch);
+      const noHyphenMatch = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "the antipattern",
+      );
+      assert.isNull(noHyphenMatch);
+    });
+
+    it("strips zero-width formatting chars from PDF spans", function () {
+      const page = makePage(0, 800, [
+        { text: "first​word", x: 0, y: 0, width: 60, height: 10 },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects([page], 0, "firstword");
+      assert.isNotNull(match);
+    });
+
+    it("unifies precomposed and decomposed accented characters", function () {
+      // PDF span uses precomposed é (U+00E9); model writes decomposed e + ́.
+      const page = makePage(0, 800, [
+        { text: "café lab", x: 0, y: 0, width: 60, height: 10 },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects([page], 0, "café lab");
+      assert.isNotNull(match);
+    });
+
+    it("falls back to the prefix when the model abbreviates with a trailing ellipsis", function () {
+      // glm-4.5-air sometimes ends a quote with `…` to elide trailing content.
+      // The literal text (ending in an ellipsis) doesn't appear in the PDF, but
+      // the prefix before the ellipsis does — accept that prefix as a match.
+      const page = makePage(0, 800, [
+        {
+          text: "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate weight updates while the base model is frozen.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+      ]);
+      const unicodeMatch = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate…",
+      );
+      assert.isNotNull(unicodeMatch);
+      const asciiMatch = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate...",
+      );
+      assert.isNotNull(asciiMatch);
+    });
+
+    it("does not accept an over-short prefix when stripping an ellipsis", function () {
+      // Guard against eliding the entire quote down to a generic stub.
+      assert.isNull(pdfReaderTestUtils.stripTrailingEllipsis("we..."));
+      const page = makePage(0, 800, [
+        {
+          text: "we briefly note that the experiments were small.",
+          x: 0,
+          y: 0,
+          width: 200,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects([page], 0, "we…");
+      assert.isNull(match);
+    });
+
+    it("falls back to the longest verbatim substring when the model splices in paraphrase", function () {
+      // The page contains a verbatim phrase the model copied, but the model
+      // wrapped it in its own connective wording that doesn't appear in the
+      // PDF. The LCS fallback locates the verbatim island and annotates it.
+      const page = makePage(0, 800, [
+        {
+          text: "We train CLIP by aligning semantically matched images with texts in a contrastive batch.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "CLIP's training objective is to pair semantically matched images with texts into image-text pairs.",
+      );
+      assert.isNotNull(match);
+      assert.include(
+        match!.matchedText.toLowerCase(),
+        "semantically matched images with texts",
+      );
+    });
+
+    it("rejects an LCS fallback shorter than the minimum length", function () {
+      const page = makePage(0, 800, [
+        { text: "alpha beta gamma delta", x: 0, y: 0, width: 200, height: 10 },
+      ]);
+      // The only shared substring is "alpha" — far below the 40-char floor.
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "alpha epsilon zeta eta theta iota kappa lambda mu",
+      );
+      assert.isNull(match);
+    });
+
+    it("skips the LCS fallback when no target page is given", function () {
+      // Without a pinned page, fuzzy matching could over-trigger across pages.
+      const page = makePage(0, 800, [
+        {
+          text: "We train CLIP by aligning semantically matched images with texts.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        null,
+        "CLIP's training pairs semantically matched images with texts via contrast.",
+      );
+      assert.isNull(match);
+    });
   });
 
   describe("pdf annotation json builder", function () {

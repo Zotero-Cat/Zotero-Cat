@@ -1,5 +1,6 @@
 import { getString } from "../../utils/locale";
 import { truncate } from "../../utils/text";
+import { createInlineCopyButton } from "../../utils/copyButton";
 import type {
   AnnotationBatch,
   AnnotationProposal,
@@ -147,7 +148,14 @@ function renderProposalCard(
   if (proposal.errorMessage) {
     const error = doc.createElement("div");
     error.className = "za-agent-proposal-error";
-    error.textContent = proposal.errorMessage;
+    const text = doc.createElement("span");
+    text.className = "za-agent-proposal-error-text";
+    text.textContent = proposal.errorMessage;
+    const copyButton = createInlineCopyButton(
+      doc,
+      () => proposal.errorMessage || "",
+    );
+    error.append(text, copyButton);
     card.appendChild(error);
   }
 

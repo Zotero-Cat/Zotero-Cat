@@ -163,6 +163,9 @@ export function serializeConversation(conversation: ConversationState) {
       ...(typeof message.responseWaitMs === "number"
         ? { responseWaitMs: message.responseWaitMs }
         : {}),
+      ...(message.reasoningContent
+        ? { reasoning_content: message.reasoningContent }
+        : {}),
     }));
   return {
     id: conversation.id,
@@ -245,11 +248,16 @@ function normalizePersistedMessage(entry: unknown): RuntimeMessage | null {
   const content = typeof record.content === "string" ? record.content : "";
   const createdAt = normalizeTimestamp(record.createdAt, Date.now());
   const responseWaitMs = normalizeOptionalDuration(record.responseWaitMs);
+  const reasoningContent =
+    typeof record.reasoning_content === "string" && record.reasoning_content
+      ? record.reasoning_content
+      : "";
   return {
     role,
     content: truncateForPersistence(content),
     createdAt,
     ...(responseWaitMs === null ? {} : { responseWaitMs }),
+    ...(reasoningContent ? { reasoningContent } : {}),
   };
 }
 

@@ -94,7 +94,7 @@ export function toOpenAIToolSpec(definition: ToolDefinition) {
   return {
     type: "function" as const,
     function: {
-      name: definition.type,
+      name: pickWireToolName(definition),
       description: definition.description || definition.type,
       parameters: definition.inputSchema || {
         type: "object",
@@ -108,7 +108,7 @@ export function toOpenAIToolSpec(definition: ToolDefinition) {
 
 export function toMCPToolSpec(definition: ToolDefinition) {
   return {
-    name: definition.type,
+    name: pickWireToolName(definition),
     description: definition.description || definition.type,
     inputSchema: definition.inputSchema || {
       type: "object",
@@ -119,6 +119,17 @@ export function toMCPToolSpec(definition: ToolDefinition) {
       ? { outputSchema: definition.outputSchema }
       : {}),
   };
+}
+
+function pickWireToolName(definition: ToolDefinition): string {
+  // Provider-side function names should use the underscore form when an
+  // alias is registered, since most OpenAI-compatible backends are happier
+  // with snake_case names.
+  const underscored = definition.type.replace(/-/g, "_");
+  if (definition.aliases?.includes(underscored)) {
+    return underscored;
+  }
+  return definition.type;
 }
 
 function normalizeValue(

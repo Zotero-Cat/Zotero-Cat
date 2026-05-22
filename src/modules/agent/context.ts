@@ -6,6 +6,7 @@ import {
 import type { AgentMessage } from "./types";
 import {
   DEFAULT_PROMPT_TEMPLATE_ID,
+  getPdfToolsNativeHintBlock,
   getPdfToolsRulesBlock,
   getPromptTemplateByID,
 } from "./promptTemplates";
@@ -74,6 +75,7 @@ interface BuildRequestOptions {
   externalContext?: string;
   modelContextWindow?: number | null;
   includePdfToolsRules?: boolean;
+  useNativeToolCalls?: boolean;
 }
 
 export interface AgentContextPreview {
@@ -128,7 +130,11 @@ export function buildContextPreview(
   );
   const systemChunks = [template.systemPrompt];
   if (options.includePdfToolsRules) {
-    systemChunks.push(getPdfToolsRulesBlock());
+    systemChunks.push(
+      options.useNativeToolCalls
+        ? getPdfToolsNativeHintBlock()
+        : getPdfToolsRulesBlock(),
+    );
   }
   if (contextText) {
     systemChunks.push(contextText);

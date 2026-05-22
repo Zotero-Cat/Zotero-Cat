@@ -6,11 +6,17 @@ import {
   buildRequestMessagesWithContext,
   getDefaultContextOptions,
 } from "./context";
-import type { AgentMessage } from "./types";
+import type { AgentMessage, AssistantToolCall } from "./types";
 import {
+  ChatResult,
   createProviderFromPrefs,
   isApiKeyRequiredForProvider,
 } from "./provider";
+import {
+  buildEndpointKey,
+  isNativeToolsUnsupported,
+} from "./functionCalling/quirks";
+import { runAssistantTurn } from "./functionCalling/runner";
 import { shouldRetryChatError, isAbortError } from "./chatRetry";
 import {
   ConversationState,
@@ -73,13 +79,16 @@ import { createRuntimeID } from "./runtimeIds";
 import { getProviderApiKey } from "./secureApiKey";
 import { openAgentPreferences } from "../prefsPane";
 import {
+  buildToolActionFromNativeCall,
   parseAssistantToolActions,
   executeToolAction,
+  getOpenAIToolSpecs,
   hasExecutableAssistantToolAction,
   inferAssistantReadOnlyToolAction,
   looksLikeAssistantToolIntent,
   splitAssistantToolActionMessage,
   stripAssistantToolActionMarkup,
+  type ToolAction,
 } from "./toolAction";
 import {
   isAnnotationWriteAction,
@@ -102,6 +111,7 @@ import {
 } from "./annotationProposals";
 import {
   buildFailedAnnotationRepairPrompt,
+  gatherFailedAnnotationPageText,
   shouldRepairFailedAnnotationBatch,
 } from "./annotationRepair";
 import { renderProposalBatch } from "./proposalView";
@@ -124,6 +134,11 @@ import {
 } from "./webSearchContext";
 import { renderMessageMarkdown } from "./markdown";
 import { truncateInline, formatShortDateTime } from "../../utils/text";
+import { copyTextToClipboard } from "../../utils/clipboard";
+import {
+  createInlineCopyButton,
+  showCopyFeedback,
+} from "../../utils/copyButton";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -195,6 +210,12 @@ interface PendingToolFollowUp {
   reasoningEffort: ReasoningEffortValue;
   item: Zotero.Item | null;
   readResults: string;
+  nativeToolCalls?: AssistantToolCall[];
+  nativeWriteCalls?: AssistantToolCall[];
+  nativeReadResults?: Array<{
+    toolCall: AssistantToolCall;
+    result: string;
+  }>;
 }
 
 const runtime: AgentRuntime = {
@@ -379,6 +400,13 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
         if (eventBubble) {
           messages.appendChild(eventBubble);
         }
+        continue;
+      }
+      // Tool-result messages are kept in conversation history so future
+      // requests can pair them with the preceding assistant tool_calls turn,
+      // but they have no UI of their own — the tool-event bubble above
+      // already conveys progress to the user.
+      if (message.role === "tool") {
         continue;
       }
       const bubble = doc.createElement("div");
@@ -901,6 +929,7 @@ async function sendPreparedMessage(
       externalContext,
       modelContextWindow: options.modelContextWindow,
       includePdfToolsRules: isPdfToolsEnabledPref(),
+      useNativeToolCalls: shouldUseNativeToolCalls(),
     },
   );
   await sendMessage(
@@ -982,7 +1011,7 @@ async function sendMessage(
   }
 }
 
-const MAX_TOOL_CHAIN_DEPTH = 3;
+const MAX_TOOL_CHAIN_DEPTH = 24;
 
 function appendToolEventMessage(
   conversationKey: string,
@@ -1065,6 +1094,26 @@ function takeToolActionContent(
   return content;
 }
 
+function appendToolResultMessage(
+  conversationKey: string,
+  options: { toolCallId: string; toolName: string; content: string },
+): number {
+  const conversation = getConversationForKey(conversationKey);
+  if (!conversation) {
+    return -1;
+  }
+  const index =
+    conversation.messages.push({
+      role: "tool",
+      content: options.content,
+      toolCallId: options.toolCallId,
+      toolName: options.toolName,
+      createdAt: Date.now(),
+    }) - 1;
+  touchConversationByKey(conversationKey);
+  return index;
+}
+
 function appendAssistantContinuation(conversationKey: string): number {
   const conversation = getConversationForKey(conversationKey);
   if (!conversation) {
@@ -1098,6 +1147,28 @@ async function continueAfterAssistantToolAction(
 ) {
   if (depth >= MAX_TOOL_CHAIN_DEPTH) {
     runtime.detectedToolActionByKey.delete(conversationKey);
+    const exhaustedMessage = getString("agent-tool-chain-exhausted", {
+      args: { max: String(MAX_TOOL_CHAIN_DEPTH) },
+    });
+    const assistantMessage = getConversationMessage(
+      conversationKey,
+      assistantMessageIndex,
+    );
+    if (assistantMessage) {
+      const prior = assistantMessage.content?.trim();
+      assistantMessage.content = prior
+        ? `${prior}\n\n${exhaustedMessage}`
+        : exhaustedMessage;
+      touchConversationByKey(conversationKey);
+      saveConversationStore();
+    }
+    recordDiagnostic(
+      "warning",
+      exhaustedMessage,
+      `Tool chain depth ${depth} reached (max ${MAX_TOOL_CHAIN_DEPTH}).`,
+    );
+    stopWaitingAnimation();
+    runtime.streamingAssistant = null;
     await refreshAllSections();
     return;
   }
@@ -1106,6 +1177,18 @@ async function continueAfterAssistantToolAction(
     assistantMessageIndex,
   );
   if (!assistantMessage) {
+    return;
+  }
+  if (assistantMessage.toolCalls?.length) {
+    await continueAfterNativeToolCalls(
+      requestMessages,
+      conversationKey,
+      assistantMessageIndex,
+      requestToken,
+      reasoningEffort,
+      item,
+      depth,
+    );
     return;
   }
   const queuedToolContent = takeToolActionContent(
@@ -1370,6 +1453,346 @@ function stripToolActionJSON(content: string): string {
   return stripAssistantToolActionMarkup(content);
 }
 
+interface NativeToolExecution {
+  action: ToolAction;
+  toolCall: AssistantToolCall;
+  result: string;
+  failed: boolean;
+}
+
+async function continueAfterNativeToolCalls(
+  requestMessages: AgentMessage[],
+  conversationKey: string,
+  assistantMessageIndex: number,
+  requestToken: number,
+  reasoningEffort: ReasoningEffortValue,
+  item: Zotero.Item | null,
+  depth: number,
+) {
+  const assistantMessage = getConversationMessage(
+    conversationKey,
+    assistantMessageIndex,
+  );
+  const toolCalls = assistantMessage?.toolCalls || [];
+  if (!assistantMessage || !toolCalls.length) {
+    return;
+  }
+  if (
+    assistantMessage.responseWaitMs === undefined &&
+    runtime.waitingStartedAt !== null
+  ) {
+    assistantMessage.responseWaitMs = Math.max(
+      0,
+      Date.now() - runtime.waitingStartedAt,
+    );
+  }
+
+  const reads: NativeToolExecution[] = [];
+  const writes: { action: ToolAction; toolCall: AssistantToolCall }[] = [];
+  const unrecognized: AssistantToolCall[] = [];
+  for (const toolCall of toolCalls) {
+    const action = buildToolActionFromNativeCall(
+      toolCall.name,
+      toolCall.arguments,
+    );
+    if (!action) {
+      unrecognized.push(toolCall);
+      continue;
+    }
+    if (action.readOnly) {
+      reads.push({ action, toolCall, result: "", failed: false });
+    } else {
+      writes.push({ action, toolCall });
+    }
+  }
+  if (!reads.length && !writes.length) {
+    runtime.detectedToolActionByKey.delete(conversationKey);
+    saveConversationStore();
+    await refreshAllSections();
+    return;
+  }
+  runtime.detectedToolActionByKey.delete(conversationKey);
+  await refreshAllSections();
+
+  for (const entry of reads) {
+    const eventIndex = appendToolEventMessage(
+      conversationKey,
+      entry.action.type,
+    );
+    await refreshAllSections();
+    let externalContext = "";
+    try {
+      externalContext = await executeToolAction(entry.action, {
+        requestToken,
+        item,
+        onStatus: (status) =>
+          applyWebSearchStatus(status as WebSearchRunStatus),
+      });
+    } catch (error) {
+      externalContext = `ERROR: ${formatError(error)}`;
+    }
+    if (requestToken !== runtime.requestToken) {
+      return;
+    }
+    entry.failed = externalContext.startsWith("ERROR:");
+    entry.result = externalContext;
+    if (entry.failed) {
+      markToolEventFailed(
+        conversationKey,
+        eventIndex,
+        externalContext.replace(/^ERROR:\s*/, ""),
+      );
+      recordDiagnostic(
+        "error",
+        getString("agent-tool-failed", {
+          args: { tool: entry.action.type },
+        }),
+        externalContext,
+      );
+    } else {
+      markToolEventDone(conversationKey, eventIndex);
+    }
+    // Persist a role:"tool" message paired with the originating tool_call_id
+    // so future turns see a well-formed [assistant{tool_calls}, tool, ...]
+    // sequence. Without this, the next user turn replays the assistant
+    // tool_calls without responses and providers (DeepSeek, etc.) 400 with
+    // "insufficient tool messages following tool_calls message".
+    appendToolResultMessage(conversationKey, {
+      toolCallId: entry.toolCall.id,
+      toolName: entry.toolCall.name,
+      content: entry.result || "(no output)",
+    });
+    saveConversationStore();
+    await refreshAllSections();
+  }
+
+  if (requestToken !== runtime.requestToken) {
+    return;
+  }
+  if (runtime.cancelRequested) {
+    await handleChatFailure(
+      new Error("Request aborted"),
+      conversationKey,
+      assistantMessageIndex,
+    );
+    return;
+  }
+
+  let proposalsCreatedBatch = false;
+  let writeFailedMessage = "";
+  let writeEventIndex = -1;
+  if (writes.length && (!item || !isPdfToolsEnabledPref())) {
+    writeEventIndex = appendToolEventMessage(
+      conversationKey,
+      "propose-annotation",
+    );
+    markToolEventFailed(
+      conversationKey,
+      writeEventIndex,
+      getString("agent-tool-write-unavailable"),
+    );
+    writeFailedMessage = getString("agent-tool-write-unavailable");
+    saveConversationStore();
+    await refreshAllSections();
+  } else if (writes.length && item && isPdfToolsEnabledPref()) {
+    writeEventIndex = appendToolEventMessage(
+      conversationKey,
+      "propose-annotation",
+    );
+    await refreshAllSections();
+    const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
+    const proposals = [] as Awaited<ReturnType<typeof resolveWriteAction>>;
+    for (const { action } of writes) {
+      if (!isAnnotationWriteAction(action)) {
+        continue;
+      }
+      const resolved = await resolveWriteAction(action, { item, locale });
+      proposals.push(...resolved);
+    }
+    if (proposals.length) {
+      const batch = createBatch(
+        conversationKey,
+        assistantMessageIndex,
+        proposals,
+      );
+      const summary = summarizeBatch(batch);
+      if (summary.pending === 0 && summary.failed > 0) {
+        markToolEventFailed(
+          conversationKey,
+          writeEventIndex,
+          getFirstProposalError(batch) || "No actionable proposals produced.",
+        );
+        writeFailedMessage =
+          getFirstProposalError(batch) || "No actionable proposals produced.";
+      } else {
+        markToolEventDone(conversationKey, writeEventIndex);
+      }
+      proposalsCreatedBatch = true;
+      if (summary.pending > 0) {
+        runtime.pendingToolFollowUp.set(conversationKey, {
+          requestMessages,
+          assistantContent: "",
+          assistantMessageIndex,
+          reasoningEffort,
+          item,
+          readResults: "",
+          nativeToolCalls: toolCalls,
+          nativeWriteCalls: writes.map((entry) => entry.toolCall),
+          nativeReadResults: reads.map((entry) => ({
+            toolCall: entry.toolCall,
+            result: entry.result,
+          })),
+        });
+      } else {
+        runtime.pendingToolFollowUp.delete(conversationKey);
+      }
+      saveConversationStore();
+      if (shouldAutoApplyAnnotationBatch(batch)) {
+        await applyBatchAndContinue(batch.conversationKey, true);
+      } else {
+        await refreshAllSections();
+      }
+      return;
+    }
+    markToolEventFailed(
+      conversationKey,
+      writeEventIndex,
+      "No proposals produced.",
+    );
+    writeFailedMessage = "No proposals produced.";
+    saveConversationStore();
+    await refreshAllSections();
+  }
+
+  if (proposalsCreatedBatch) {
+    return;
+  }
+
+  const followUpMessages: AgentMessage[] = [
+    ...requestMessages,
+    assistantMessage,
+  ];
+  for (const entry of reads) {
+    followUpMessages.push({
+      role: "tool",
+      content: entry.result || "(no output)",
+      toolCallId: entry.toolCall.id,
+      toolName: entry.toolCall.name,
+    });
+  }
+  const writeFallbackContent =
+    writeFailedMessage ||
+    "ERROR: Write tool result unavailable (batch not created).";
+  for (const entry of writes) {
+    followUpMessages.push({
+      role: "tool",
+      content: writeFallbackContent,
+      toolCallId: entry.toolCall.id,
+      toolName: entry.toolCall.name,
+    });
+    // Mirror the tool result into conversation history (reads were already
+    // persisted in the loop above). Keeps the [assistant{tool_calls}, tool…]
+    // sequence intact for subsequent user turns.
+    appendToolResultMessage(conversationKey, {
+      toolCallId: entry.toolCall.id,
+      toolName: entry.toolCall.name,
+      content: writeFallbackContent,
+    });
+  }
+  for (const stray of unrecognized) {
+    const strayContent = `ERROR: Unrecognized tool ${stray.name}.`;
+    followUpMessages.push({
+      role: "tool",
+      content: strayContent,
+      toolCallId: stray.id,
+      toolName: stray.name,
+    });
+    appendToolResultMessage(conversationKey, {
+      toolCallId: stray.id,
+      toolName: stray.name,
+      content: strayContent,
+    });
+  }
+
+  const continuationIndex = appendAssistantContinuation(conversationKey);
+  await refreshAllSections();
+  await sendMessage(
+    followUpMessages,
+    conversationKey,
+    continuationIndex,
+    requestToken,
+    reasoningEffort,
+  );
+  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
+    return;
+  }
+  await continueAfterAssistantToolAction(
+    followUpMessages,
+    conversationKey,
+    continuationIndex,
+    requestToken,
+    reasoningEffort,
+    item,
+    depth + 1,
+  );
+}
+
+function getToolCallMode(): "auto" | "native" | "text" {
+  const raw = String(getPref("toolCallMode") || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "native" || raw === "text") {
+    return raw;
+  }
+  return "auto";
+}
+
+function getActiveBaseURL(): string {
+  return String(getPref("openaiBaseUrl") || "").trim();
+}
+
+function getActiveEndpointKey(): string {
+  const provider = String(getPref("provider") || "");
+  return buildEndpointKey(provider, getActiveBaseURL());
+}
+
+function shouldUseNativeToolCalls(): boolean {
+  if (!isPdfToolsEnabledPref()) {
+    return false;
+  }
+  const mode = getToolCallMode();
+  if (mode === "text") {
+    return false;
+  }
+  if (mode === "auto" && isNativeToolsUnsupported(getActiveEndpointKey())) {
+    return false;
+  }
+  return true;
+}
+
+function buildNativeToolSpecs() {
+  const allowed = new Set<string>();
+  if (isPdfToolsEnabledPref()) {
+    for (const name of [
+      "read_pdf",
+      "list_annotations",
+      "propose_annotation",
+      "modify_annotation",
+      "delete_annotation",
+    ]) {
+      allowed.add(name);
+    }
+  }
+  if (!allowed.size) {
+    return [];
+  }
+  return getOpenAIToolSpecs().filter((spec) => allowed.has(spec.function.name));
+}
+
+function buildEmptyChatResult(content: string): ChatResult {
+  return { content, toolCalls: [], finishReason: "stop" };
+}
+
 function shouldAutoApplyAnnotationBatch(batch: AnnotationBatch): boolean {
   const approvalKeys = getScopedPendingApprovalKeys(batch);
   if (!approvalKeys.length) {
@@ -1415,6 +1838,52 @@ async function maybeApplyResolvedBatch(conversationKey: string): Promise<void> {
     return;
   }
   await applyBatchAndContinue(conversationKey, false);
+}
+
+function buildBatchFollowUpMessages(
+  pending: PendingToolFollowUp,
+  followUpPrompt: string,
+): AgentMessage[] {
+  if (!pending.nativeToolCalls?.length) {
+    return [
+      ...pending.requestMessages,
+      { role: "assistant", content: pending.assistantContent } as AgentMessage,
+      { role: "user", content: followUpPrompt } as AgentMessage,
+    ];
+  }
+  const messages: AgentMessage[] = [
+    ...pending.requestMessages,
+    {
+      role: "assistant",
+      content: pending.assistantContent || "",
+      toolCalls: pending.nativeToolCalls,
+    },
+  ];
+  const readResultByCallId = new Map<string, string>();
+  for (const entry of pending.nativeReadResults || []) {
+    readResultByCallId.set(entry.toolCall.id, entry.result || "(no output)");
+  }
+  const writeCallIds = new Set<string>(
+    (pending.nativeWriteCalls || []).map((call) => call.id),
+  );
+  for (const call of pending.nativeToolCalls) {
+    if (writeCallIds.has(call.id)) {
+      messages.push({
+        role: "tool",
+        content: followUpPrompt,
+        toolCallId: call.id,
+        toolName: call.name,
+      });
+      continue;
+    }
+    messages.push({
+      role: "tool",
+      content: readResultByCallId.get(call.id) || "(no output)",
+      toolCallId: call.id,
+      toolName: call.name,
+    });
+  }
+  return messages;
 }
 
 async function applyBatchAndContinue(
@@ -1503,11 +1972,19 @@ async function applyBatchAndContinue(
   }
   const summary = summarizeBatch(batch);
   const followUpPrompt = buildAnnotationFollowUpPrompt(batch, summary);
-  const followUpMessages = [
-    ...pending.requestMessages,
-    { role: "assistant", content: pending.assistantContent } as AgentMessage,
-    { role: "user", content: followUpPrompt } as AgentMessage,
-  ];
+  const followUpMessages = buildBatchFollowUpMessages(pending, followUpPrompt);
+  // Mirror the write tool results into conversation history. Reads (if any)
+  // were already persisted by continueAfterNativeToolCalls before the batch
+  // was created; here we only need to close out the write tool_call_ids the
+  // user just accepted/rejected so the [assistant{tool_calls}, tool…]
+  // sequence is intact on subsequent user turns.
+  for (const call of pending.nativeWriteCalls || []) {
+    appendToolResultMessage(conversationKey, {
+      toolCallId: call.id,
+      toolName: call.name,
+      content: followUpPrompt,
+    });
+  }
   runtime.pendingToolFollowUp.delete(conversationKey);
   clearBatch(conversationKey);
   await refreshAllSections();
@@ -1603,12 +2080,28 @@ async function requestFailedAnnotationRepair(
   const continuationIndex = appendAssistantContinuation(conversationKey);
   await refreshAllSections();
   const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
+  // When the model went straight to propose_annotation without calling
+  // read_pdf, readResults is empty and the repair prompt would have nothing
+  // for the model to re-quote against. Auto-fetch the target pages so the
+  // retry can see the actual PDF text.
+  let effectiveReadResults = readResults;
+  if (!effectiveReadResults.trim()) {
+    try {
+      effectiveReadResults = await gatherFailedAnnotationPageText(batch);
+    } catch {
+      // best effort — fall back to the original empty readResults
+    }
+  }
   const followUpMessages = [
     ...requestMessages,
     { role: "assistant", content: assistantContent } as AgentMessage,
     {
       role: "user",
-      content: buildFailedAnnotationRepairPrompt(batch, readResults, locale),
+      content: buildFailedAnnotationRepairPrompt(
+        batch,
+        effectiveReadResults,
+        locale,
+      ),
     } as AgentMessage,
   ];
   await sendMessage(
@@ -1747,12 +2240,14 @@ async function runChatAttempt(
   setReceivedStreamDelta: (value: boolean) => void,
 ) {
   const provider = createProviderFromPrefs();
+  const useNativeTools = shouldUseNativeToolCalls();
+  const nativeToolSpecs = useNativeTools ? buildNativeToolSpecs() : [];
   let receivedStreamDelta = false;
   let detectedToolAction = false;
   let activeCancel: (() => void) | null = null;
   let acceptingStreamDelta = true;
-  let resolveDetectedToolAction: ((content: string) => void) | null = null;
-  const detectedToolActionPromise = new Promise<string>((resolve) => {
+  let resolveDetectedToolAction: ((content: ChatResult) => void) | null = null;
+  const detectedToolActionPromise = new Promise<ChatResult>((resolve) => {
     resolveDetectedToolAction = resolve;
   });
   let refreshScheduled = false;
@@ -1799,7 +2294,7 @@ async function runChatAttempt(
     runtime.detectedToolActionByKey.add(conversationKey);
     runtime.shouldAutoScroll = true;
     queueStreamRefresh();
-    resolveDetectedToolAction?.(content);
+    resolveDetectedToolAction?.(buildEmptyChatResult(content));
     resolveDetectedToolAction = null;
     const cancel = activeCancel;
     if (!cancel) {
@@ -1813,54 +2308,92 @@ async function runChatAttempt(
       }
     });
   };
-  let reply = "";
+  // Reset transient per-attempt state so the runner's internal retry (after a
+  // recoverable quirk is observed) starts from a clean slate: no half-streamed
+  // bubble, no stale tool_calls, no stale "first delta seen" flag.
+  const resetAttemptStateForRetry = () => {
+    receivedStreamDelta = false;
+    detectedToolAction = false;
+    acceptingStreamDelta = true;
+    setReceivedStreamDelta(false);
+    const assistantMessage = getConversationMessage(
+      conversationKey,
+      assistantMessageIndex,
+    );
+    if (assistantMessage) {
+      assistantMessage.content = "";
+      assistantMessage.toolCalls = undefined;
+    }
+  };
+  let reply: ChatResult = buildEmptyChatResult("");
   try {
-    const providerReply = provider
-      .chat(requestMessages, {
-        reasoningEffort,
-        onCanceller(cancel) {
-          if (!acceptingStreamDelta || requestToken !== runtime.requestToken) {
-            return;
-          }
-          activeCancel = cancel;
-          runtime.cancelActiveRequest = cancel;
-          if (runtime.cancelRequested) {
-            cancel();
-          }
-        },
-        onStreamDelta(delta) {
-          if (
-            !acceptingStreamDelta ||
-            requestToken !== runtime.requestToken ||
-            !delta
-          ) {
-            return;
-          }
-          const assistantMessage = getConversationMessage(
+    const runnerPromise = runAssistantTurn({
+      provider,
+      messages: requestMessages,
+      endpointKey: getActiveEndpointKey(),
+      baseURL: getActiveBaseURL(),
+      tools: nativeToolSpecs.length ? nativeToolSpecs : undefined,
+      toolChoice: nativeToolSpecs.length ? "auto" : undefined,
+      reasoningEffort,
+      onCanceller(cancel) {
+        if (!acceptingStreamDelta || requestToken !== runtime.requestToken) {
+          return;
+        }
+        activeCancel = cancel;
+        runtime.cancelActiveRequest = cancel;
+        if (runtime.cancelRequested) {
+          cancel();
+        }
+      },
+      onStreamDelta(delta) {
+        if (
+          !acceptingStreamDelta ||
+          requestToken !== runtime.requestToken ||
+          !delta
+        ) {
+          return;
+        }
+        const assistantMessage = getConversationMessage(
+          conversationKey,
+          assistantMessageIndex,
+        );
+        if (!assistantMessage) {
+          return;
+        }
+        if (!receivedStreamDelta) {
+          receivedStreamDelta = true;
+          setReceivedStreamDelta(true);
+          stopWaitingAnimation();
+          runtime.streamingAssistant = {
             conversationKey,
-            assistantMessageIndex,
-          );
-          if (!assistantMessage) {
-            return;
-          }
-          if (!receivedStreamDelta) {
-            receivedStreamDelta = true;
-            setReceivedStreamDelta(true);
-            stopWaitingAnimation();
-            runtime.streamingAssistant = {
-              conversationKey,
-              messageIndex: assistantMessageIndex,
-            };
-            assistantMessage.content = "";
-          }
-          assistantMessage.content += delta;
-          requestToolActionHandling(assistantMessage.content);
-          touchConversationByKey(conversationKey);
-          runtime.shouldAutoScroll = true;
-          queueStreamRefresh();
-        },
-      })
-      .catch((error) => {
+            messageIndex: assistantMessageIndex,
+          };
+          assistantMessage.content = "";
+        }
+        assistantMessage.content += delta;
+        requestToolActionHandling(assistantMessage.content);
+        touchConversationByKey(conversationKey);
+        runtime.shouldAutoScroll = true;
+        queueStreamRefresh();
+      },
+      onDiagnostic(event) {
+        const stringID =
+          event.kind === "native-tools-unsupported"
+            ? "agent-diagnostics-tool-fallback"
+            : "agent-diagnostics-reasoning-echo";
+        recordDiagnostic("warning", getString(stringID), event.message);
+        resetAttemptStateForRetry();
+      },
+    })
+      .then(
+        (turn): ChatResult => ({
+          content: turn.content,
+          toolCalls: turn.toolCalls,
+          finishReason: turn.finishReason,
+          reasoningContent: turn.reasoningContent,
+        }),
+      )
+      .catch((error): ChatResult => {
         const assistantMessage = getConversationMessage(
           conversationKey,
           assistantMessageIndex,
@@ -1870,12 +2403,12 @@ async function runChatAttempt(
           assistantMessage &&
           hasExecutableAssistantToolAction(assistantMessage.content)
         ) {
-          return assistantMessage.content;
+          return buildEmptyChatResult(assistantMessage.content);
         }
         runtime.detectedToolActionByKey.delete(conversationKey);
         throw error;
       });
-    reply = await Promise.race([providerReply, detectedToolActionPromise]);
+    reply = await Promise.race([runnerPromise, detectedToolActionPromise]);
   } catch (error) {
     runtime.detectedToolActionByKey.delete(conversationKey);
     throw error;
@@ -1889,25 +2422,54 @@ async function runChatAttempt(
   if (requestToken !== runtime.requestToken) {
     return;
   }
+  if (reply.toolCalls.length) {
+    stopWaitingAnimation();
+    runtime.streamingAssistant = null;
+    const assistantMessage = getConversationMessage(
+      conversationKey,
+      assistantMessageIndex,
+    );
+    if (assistantMessage) {
+      assistantMessage.content = (
+        reply.content ||
+        assistantMessage.content ||
+        ""
+      ).trim();
+      assistantMessage.toolCalls = reply.toolCalls;
+      if (reply.reasoningContent) {
+        assistantMessage.reasoningContent = reply.reasoningContent;
+      }
+      runtime.detectedToolActionByKey.add(conversationKey);
+      touchConversationByKey(conversationKey);
+      saveConversationStore();
+      await refreshAllSections();
+    }
+    return;
+  }
   if (receivedStreamDelta) {
     const assistantMessage = getConversationMessage(
       conversationKey,
       assistantMessageIndex,
     );
-    if (assistantMessage && !assistantMessage.content.trim() && reply.trim()) {
-      if (hasExecutableAssistantToolAction(reply)) {
-        splitAssistantToolMessage(reply);
-      } else {
-        assistantMessage.content = reply;
+    if (assistantMessage) {
+      if (!assistantMessage.content.trim() && reply.content.trim()) {
+        if (hasExecutableAssistantToolAction(reply.content)) {
+          splitAssistantToolMessage(reply.content);
+        } else {
+          assistantMessage.content = reply.content;
+        }
+        touchConversationByKey(conversationKey);
       }
-      touchConversationByKey(conversationKey);
+      if (reply.reasoningContent) {
+        assistantMessage.reasoningContent = reply.reasoningContent;
+      }
     }
     runtime.streamingAssistant = null;
     saveConversationStore();
     await refreshAllSections();
     return;
   }
-  if (hasExecutableAssistantToolAction(reply)) {
+  if (hasExecutableAssistantToolAction(reply.content)) {
     const assistantMessage = getConversationMessage(
       conversationKey,
       assistantMessageIndex,
@@ -1916,7 +2478,10 @@ async function runChatAttempt(
       stopWaitingAnimation();
       runtime.streamingAssistant = null;
       runtime.detectedToolActionByKey.add(conversationKey);
-      splitAssistantToolMessage(reply);
+      splitAssistantToolMessage(reply.content);
+      if (reply.reasoningContent) {
+        assistantMessage.reasoningContent = reply.reasoningContent;
+      }
       touchConversationByKey(conversationKey);
       saveConversationStore();
       await refreshAllSections();
@@ -1928,7 +2493,18 @@ async function runChatAttempt(
     conversationKey,
     messageIndex: assistantMessageIndex,
   };
-  await streamAssistantReply(conversationKey, assistantMessageIndex, reply);
+  const assistantMessageForReasoning = getConversationMessage(
+    conversationKey,
+    assistantMessageIndex,
+  );
+  if (assistantMessageForReasoning && reply.reasoningContent) {
+    assistantMessageForReasoning.reasoningContent = reply.reasoningContent;
+  }
+  await streamAssistantReply(
+    conversationKey,
+    assistantMessageIndex,
+    reply.content,
+  );
   saveConversationStore();
 }
 
@@ -2801,7 +3377,14 @@ function renderToolEventBubble(
   if (event.status === "failed" && event.errorMessage) {
     const detail = doc.createElement("div");
     detail.className = "za-agent-tool-event-detail";
-    detail.textContent = event.errorMessage;
+    const text = doc.createElement("span");
+    text.className = "za-agent-tool-event-detail-text";
+    text.textContent = event.errorMessage;
+    const copyButton = createInlineCopyButton(
+      doc,
+      () => event.errorMessage || "",
+    );
+    detail.append(text, copyButton);
     bubble.append(detail);
   }
 
@@ -3387,50 +3970,5 @@ function createCopyButton(doc: Document, messageContent: string) {
 }
 
 async function copyMessageText(text: string) {
-  const value = text.trim();
-  if (!value) {
-    return false;
-  }
-  try {
-    Zotero.Utilities.Internal.copyTextToClipboard(value);
-    return true;
-  } catch {
-    try {
-      if (!globalThis.navigator?.clipboard?.writeText) {
-        return false;
-      }
-      await globalThis.navigator.clipboard.writeText(value);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function showCopyFeedback(doc: Document, message: string) {
-  const root = doc.querySelector<HTMLElement>(".za-agent-root");
-  if (!root) {
-    return;
-  }
-  const previous = root.querySelector(".za-agent-copy-toast");
-  if (previous) {
-    previous.remove();
-  }
-  const toast = doc.createElement("div");
-  toast.className = "za-agent-copy-toast";
-  toast.textContent = message;
-  root.appendChild(toast);
-  const view = doc.defaultView;
-  if (!view) {
-    return;
-  }
-  view.requestAnimationFrame(() => {
-    toast.classList.add("is-visible");
-  });
-  view.setTimeout(() => {
-    toast.classList.remove("is-visible");
-    view.setTimeout(() => {
-      toast.remove();
-    }, 160);
-  }, 950);
+  return copyTextToClipboard(text);
 }

@@ -17,6 +17,7 @@ declare namespace _ZoteroTypes {
       "webSearchBaseUrl": string;
       "pdfToolsEnabled": boolean;
       "pdfToolsAutoApply": boolean;
+      "toolCallMode": string;
       "agentConversationStore": string;
       "customContextStore": string;
     };

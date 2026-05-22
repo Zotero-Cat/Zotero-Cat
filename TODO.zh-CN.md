@@ -196,6 +196,115 @@
       与引导页。
 - [ ] `npm run lint:check && npm run build && npm test` 全绿。
 
+## Phase 7: Function Calling 规范化
+
+目标：把工具调用编排循环从 `section.ts` 抽出到一个独立的、可单测的 runner；
+把按 endpoint 维度的 provider quirks（`reasoning_content` 回传、原生
+`tool_calls` 不支持等）集中管理；把原生（`tool_calls`）和 text-mode JSON
+工具动作两条路径统一到一个状态机里。这是对一连串 provider 适配 bug
+（MiMo / DeepSeek-V4-Thinking 的 `reasoning_content`、`MAX_TOOL_CHAIN_DEPTH`
+默默截断、native 和 text-mode 两套分支）的结构性回应。
+
+硬约束（不要违反）：
+
+- 不引入 `langchain` / `langgraph` 运行时依赖。改用 LangGraph 风格思路演进
+  自家 runtime：显式状态机、深度门控、人工确认 checkpoint、工具所有权由
+  Zotero-Cat 决定。
+- 工具执行权一直归 Zotero-Cat；provider-native function calling 只用来
+  接收 `tool_calls`，绝不让模型直接落盘。
+- HTTP 入口只走 `Zotero.HTTP.request`。
+- `toolProtocol.ts`（MCP / OpenAI 兼容工具协议）已经在了，复用不要重复造。
+
+### 基础模块
+
+- [x] `src/modules/agent/functionCalling/errors.ts`：把
+      `ToolsNotSupportedError` 和 `ReasoningContentRequiredError` 从
+      `provider.ts` 搬过来；新增 `MaxToolDepthExceededError`。`provider.ts`
+      做兼容性 re-export。
+- [x] `src/modules/agent/functionCalling/quirks.ts`：`ProviderQuirks` 类型
+      与按 endpoint 维度的注册表；取代分散在 `section.ts` 的
+      `nativeToolsUnsupportedEndpoints` / `reasoningContentEchoEndpoints`。
+      Endpoint key 归一化与当前 `getActiveEndpointKey()` 保持一致。
+- [x] `src/modules/agent/functionCalling/messageShape.ts`：把
+      `serializeChatMessage` 与 `buildRequestPayload` 搬过来，让 quirks
+      （例如 `reasoningContentEmptyPolicy: "empty" | "omit" | "space"`）
+      在统一位置生效，`provider.ts` 瘦身。
+- [~] `src/modules/agent/functionCalling/types.ts`：暂时按下不表。
+  单回合的 runner 直接 inline 导出 `RunAssistantTurnInput` /
+  `AssistantTurnReply`；待多回合 loop 落地、出现第二个 consumer 时再
+  抽 `types.ts`。
+
+### Runner
+
+- [x] `src/modules/agent/functionCalling/runner.ts`：实现 `runAssistantTurn`。
+      纯逻辑，不引入任何 Zotero UI 类型。当前刻意保持单回合：工具执行
+      与多回合接续仍由 `section.ts` 持有，因为它们与 UI 状态、人工
+      确认环节绑定。
+- [ ] 把 native（`tool_calls`）和 text-mode JSON 工具调用合到一个 loop 里，
+      产出统一的 `AssistantTurn`（可选 `toolCalls`）。目前 text-mode JSON
+      的流式检测仍在 `section.ts` 里。延后到多回合 loop 重构再处理。
+- [ ] `MAX_TOOL_CHAIN_DEPTH` 变成 runner 入参，不再是 section.ts 里的魔数。
+      到顶时抛 `MaxToolDepthExceededError`，由 UI 层映射成可见提示。
+      延后到多回合 loop 重构再处理。
+- [x] 对已知 quirks 自恢复：捕获 `ReasoningContentRequiredError` /
+      `ToolsNotSupportedError`，通过中心注册表登记 quirk，按新 quirks
+      重试一次；不再做沉默重试，每次恢复发出一条 diagnostic。
+
+### 迁移
+
+- [x] 把 `section.ts` 的 `runChatAttempt` 改为调用 `runAssistantTurn`。
+      quirk 恢复的重试由 runner 负责；section.ts 只在 `onDiagnostic` 里
+      记一条 warning 并复位流式状态。
+      `continueAfterAssistantToolAction` / `continueAfterNativeToolCalls`
+      继续留在 `section.ts`，因为它们要协调 UI 状态和写操作的人工
+      确认。
+- [ ] 迁移完成后 `section.ts` 应回落到 ~2500 行以下，并且不再直接持有
+      provider quirks 状态。当前仍在 ~3,900 行：tool follow-up 协调还
+      内联在 section.ts。作为后续拆分项再处理。
+
+### 配套 bug 修复（与迁移一起做）
+
+- [x] `conversationRuntime.ts:184` 不再把 `content` 为空但带 `toolCalls`
+      的 assistant 消息过滤掉，同时把 `toolCalls` / `toolCallId` /
+      `toolName` 一并透传给 provider payload。
+- [x] 加固 DeepSeek-V4-Thinking quirk：对 host 匹配 `api.deepseek.com`
+      的 endpoint，把 `reasoningContentEmptyPolicy` 默认设为 `"space"`
+      （单个空格能同时绕开实测中遇到的空字符串拒绝和字段缺失校验）。
+- [x] 把工具结果落到 `conversation.messages` 里，保证多轮回放发出的
+      `[assistant{tool_calls}, tool, ...]` 序列闭合。`section.ts` 现在
+      在每个 read 工具完成时、在 `applyBatchAndContinue` 里写工具批次
+      落定后、以及未识别 / 写工具不可用的直接 follow-up 路径里都会调用
+      `appendToolResultMessage(...)`。`conversationRuntime.toProviderMessages`
+      额外用 `sanitizeToolCallSequences` 做兜底，处理那些已经把
+      `assistant.toolCalls` 留在历史里、但没来得及补 tool 结果的取消
+      / 异常路径。修掉 DeepSeek 在工具回合后下一轮请求里抛出的
+      400 "insufficient tool messages following tool_calls message"。
+
+### 测试
+
+- [x] `test/function-calling-runner.test.ts`：happy path、
+      `ReasoningContentRequiredError` 恢复、`ToolsNotSupportedError`
+      恢复、native → text-mode 兜底、host-default 透传。
+- [x] `test/function-calling-quirks.test.ts`：endpoint key 归一化、
+      运行期新增 quirks、按 host 的默认值（DeepSeek）。
+- [x] `test/function-calling-message-shape.test.ts`：assistant `tool_calls` + `reasoning_content` 往返、system / user / tool 消息 shape、
+      empty-policy 多种行为。
+- [x] `test/conversation-runtime.test.ts`：`sanitizeToolCallSequences`
+      用例集 —— 孤儿 `toolCalls` 被剥离（有 prose 时保留消息，无 prose 整条丢
+      弃）、`tool_call_id` 仅部分匹配也按孤儿处理、没有前置 assistant
+      `tool_calls` 的 `role: "tool"` 消息被丢弃、完整序列原样保留。
+
+### 后续（Phase 8 候选，本阶段不做）
+
+- [ ] 在 Zotero XPI 里 spike `@modelcontextprotocol/sdk`；若能在 XPCOM
+      下干净加载，迁移工具规范到该 SDK。在 spike 通过前继续用
+      `toolProtocol.ts` 里的轻量契约。
+- [ ] 多回合 `runFunctionCallingLoop`：由 runner 持有工具执行和深度门控，
+      把 `continueAfterAssistantToolAction` / `continueAfterNativeToolCalls`
+      合并为一台状态机，`MAX_TOOL_CHAIN_DEPTH` 进 runner config；UI 仍
+      负责写操作的人工确认。
+- [ ] 跨插件重启可恢复的工具调用 checkpoint。
+
 ## Backlog
 
 这些有用,但不属于当前 release path。

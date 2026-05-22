@@ -8,5 +8,6 @@ pref("webSearchProvider", "duckduckgo");
 pref("webSearchBaseUrl", "https://api.duckduckgo.com/");
 pref("pdfToolsEnabled", false);
 pref("pdfToolsAutoApply", false);
+pref("toolCallMode", "auto");
 pref("agentConversationStore", '{"version":2,"active":{},"conversations":[]}');
 pref("customContextStore", "{}");

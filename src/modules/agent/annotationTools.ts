@@ -630,8 +630,8 @@ async function resolveProposeAnnotation(
               color,
             },
             pageHint === null && !pageLabelHint
-              ? "Could not locate the quoted text unambiguously in the PDF. Include pageLabel or pageIndex in the action input."
-              : "Could not locate the quoted text in the PDF. For highlight/underline, use one continuous verbatim span from the requested page. If the intended quote crosses a page boundary, split it into separate page-local proposals.",
+              ? `Could not locate the quoted text unambiguously in the PDF. Include pageLabel or pageIndex in the action input. Quoted text was: "${truncate(text, 140)}".`
+              : `Could not locate the quoted text in the PDF. For highlight/underline, use one continuous verbatim span from the requested page. If the intended quote crosses a page boundary, split it into separate page-local proposals. Quoted text was: "${truncate(text, 140)}".`,
           ),
         ];
       }
