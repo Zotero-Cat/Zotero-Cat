@@ -15,6 +15,33 @@ versions until the first public stability commitment.
   "insufficient tool messages following tool_calls message" (observed against
   DeepSeek). `toProviderMessages` also runs a defensive
   `sanitizeToolCallSequences` pass for cancellation / partial-failure paths.
+- PDF highlight/underline matching now handles GLM-style quoted text that ends
+  with an ellipsis after a partial next sentence by retrying the last complete
+  sentence before the ellipsis.
+- Tool execution no longer renders separate tool-event chat bubbles or empty
+  assistant placeholders; the chat now shows one inline activity row that
+  updates as tools/search run.
+- The activity row now prioritizes the currently running tool over stale web
+  search status, so annotation preparation / application shows as annotation
+  work instead of continuing to display search progress.
+- The activity row now uses a continuous CSS spinner across the full model/tool
+  turn, and the item-pane chat height defaults to 85% of the visible page.
+- Web search no longer caps default results at 5 items.
+- Web search tools now expose `maxResults` / `count` / `limit` so the model can
+  request the amount of results it needs; SearXNG searches page forward when a
+  larger finite result count is requested.
+- Manual Zotero-context injection toggles were removed from the chat controls.
+  When PDF tools are enabled, Zotero-Cat uses tool-first PDF access instead of
+  pre-injecting metadata, notes, annotations, or selected text.
+- The custom context, context preview, and diagnostics disclosure panels were
+  removed from the chat controls; custom-context text is no longer injected
+  from the item-pane UI.
+- PDF highlight/underline matching also falls back to complete sentence-sized
+  verbatim spans when a long model quote continues with a non-verbatim
+  sentence.
+- PDF highlight/underline matching now tolerates narrow orthographic variants
+  such as `can not` / `cannot` and model-written compound hyphens where PDF
+  line-break extraction dehyphenated the indexed text.
 
 ## [0.2.0] - 2026-05-19
 

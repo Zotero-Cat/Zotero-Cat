@@ -31,6 +31,15 @@ registerToolActionHandler({
     "search web",
     "search",
   ],
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      q: { type: "string" },
+      maxResults: { type: "integer" },
+    },
+    additionalProperties: true,
+  },
   extractQuery(actionInput, rawRecord) {
     const q =
       (typeof actionInput.query === "string" ? actionInput.query : "") ||
@@ -247,6 +256,33 @@ describe("web search logic", function () {
     ]);
   });
 
+  it("should build paged SearXNG URLs when more results are requested", function () {
+    const url = webSearchTestUtils.buildSearXNGSearchURL(
+      "https://search.example/",
+      "zotero cat",
+      3,
+    );
+    assert.include(url, "q=zotero+cat");
+    assert.include(url, "format=json");
+    assert.include(url, "pageno=3");
+  });
+
+  it("should not cap web search results by default", function () {
+    const defaultLimit = webSearchTestUtils.normalizeMaxResults(undefined);
+    const results = webSearchTestUtils.parseSearXNGResults(
+      JSON.stringify({
+        results: Array.from({ length: 12 }, (_, index) => ({
+          title: `Result ${index + 1}`,
+          url: `https://example.com/result-${index + 1}`,
+          content: `Snippet ${index + 1}.`,
+        })),
+      }),
+      defaultLimit,
+    );
+
+    assert.lengthOf(results, 12);
+  });
+
   it("should format web search context with citation instructions", function () {
     const context = buildWebSearchContext({
       provider: "duckduckgo",
@@ -272,12 +308,15 @@ describe("web search logic", function () {
 
   it("should return rawInput alongside parsed action", function () {
     const action = parseAssistantToolAction(
-      '{"action":"search","action_input":{"query":"test query"}}',
+      '{"action":"search","action_input":{"query":"test query","maxResults":25}}',
     );
     assert.isNotNull(action);
     assert.equal(action!.type, "web-search");
     assert.equal(action!.query, "test query");
-    assert.deepEqual(action!.rawInput, { query: "test query" });
+    assert.deepEqual(action!.rawInput, {
+      query: "test query",
+      maxResults: 25,
+    });
   });
 
   it("should return null for unregistered tool action names", function () {

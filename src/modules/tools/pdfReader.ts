@@ -424,16 +424,43 @@ export function findTextRects(
   if (direct) {
     return direct;
   }
+  // Keep exact matching first, but tolerate common orthographic differences
+  // between model prose and PDF extraction: "can not" vs "cannot", and
+  // dehyphenated line-break compounds such as "intra- cluster" that become
+  // "intracluster" in the indexed PDF text while the model writes
+  // "intra-cluster".
+  for (const fallback of buildOrthographicFallbackQueries(normalizedQuery)) {
+    const fromOrthography = searchPages(
+      pages,
+      targetPageIndex,
+      fallback,
+      options,
+    );
+    if (fromOrthography) {
+      return fromOrthography;
+    }
+  }
   // Some models (notably glm-4.5-air) abbreviate quotes with a trailing
-  // ellipsis instead of copying the full span. After normalization `…` and
-  // `...` both end up as `...`, so we detect the abbreviation marker, strip
-  // it, and retry with the prefix. The 20-char floor guards against matching
-  // a too-generic prefix that happens to occur on the page.
-  const trimmed = stripTrailingEllipsis(normalizedQuery);
-  if (trimmed) {
-    const fromEllipsis = searchPages(pages, targetPageIndex, trimmed, options);
+  // ellipsis instead of copying the full span. Prefer the last complete
+  // sentence before the ellipsis so a half-written next sentence does not make
+  // the whole quote unmatchable, then keep the older prefix retry as fallback.
+  for (const fallback of buildEllipsisFallbackQueries(normalizedQuery)) {
+    const fromEllipsis = searchPages(pages, targetPageIndex, fallback, options);
     if (fromEllipsis) {
       return fromEllipsis;
+    }
+  }
+  // The error UI truncates long quoted text with an ellipsis, but the actual
+  // model argument may be a long multi-sentence quote without a literal
+  // ellipsis. If the whole quote fails, try complete sentence-sized spans
+  // before giving up. This keeps the annotation grounded in verbatim PDF text
+  // while avoiding failures caused by one non-verbatim trailing sentence.
+  for (const fallback of buildCompleteSentenceFallbackQueries(
+    normalizedQuery,
+  )) {
+    const fromSentence = searchPages(pages, targetPageIndex, fallback, options);
+    if (fromSentence) {
+      return fromSentence;
     }
   }
   // Last resort: models sometimes splice short verbatim phrases together with
@@ -496,6 +523,7 @@ function searchPages(
 }
 
 const MIN_ELLIPSIS_FALLBACK_PREFIX = 20;
+const MIN_SENTENCE_FALLBACK_LEN = 40;
 const MIN_LCS_FALLBACK_LEN = 40;
 
 function matchPageByLongestCommonSubstring(
@@ -585,6 +613,52 @@ function findLongestCommonSubstring(
 function stripTrailingEllipsis(normalized: string): string | null {
   // normalizeForMatching collapses whitespace and converts `…` to `...`, so
   // detecting a trailing run of 3+ dots is sufficient to spot both forms.
+  const trimmed = getPrefixBeforeTrailingEllipsis(normalized);
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.length < MIN_ELLIPSIS_FALLBACK_PREFIX) {
+    return null;
+  }
+  return trimmed;
+}
+
+function buildEllipsisFallbackQueries(normalized: string): string[] {
+  const candidates = [
+    getCompleteSentenceBeforeTrailingEllipsis(normalized),
+    stripTrailingEllipsis(normalized),
+  ];
+  return candidates.filter((candidate, index): candidate is string => {
+    if (!candidate) {
+      return false;
+    }
+    return candidates.indexOf(candidate) === index;
+  });
+}
+
+function buildCompleteSentenceFallbackQueries(normalized: string): string[] {
+  const sentences = extractCompleteSentences(normalized).filter(
+    (sentence) =>
+      sentence.length >= MIN_SENTENCE_FALLBACK_LEN && sentence !== normalized,
+  );
+  return dedupeStrings(sentences);
+}
+
+function buildOrthographicFallbackQueries(normalized: string): string[] {
+  const baseVariants = dedupeStrings([
+    normalized.replace(/\bcan\s+not\b/g, "cannot"),
+    normalized.replace(/\bcannot\b/g, "can not"),
+  ]).filter((candidate) => candidate && candidate !== normalized);
+  const candidates = [...baseVariants];
+  for (const base of [normalized, ...baseVariants]) {
+    candidates.push(base.replace(/(\w)-(\w)/g, "$1$2"));
+  }
+  return dedupeStrings(
+    candidates.filter((candidate) => candidate && candidate !== normalized),
+  );
+}
+
+function getPrefixBeforeTrailingEllipsis(normalized: string): string | null {
   if (!/\.{3,}$/.test(normalized)) {
     return null;
   }
@@ -592,10 +666,57 @@ function stripTrailingEllipsis(normalized: string): string | null {
   if (!trimmed || trimmed === normalized) {
     return null;
   }
-  if (trimmed.length < MIN_ELLIPSIS_FALLBACK_PREFIX) {
+  return trimmed;
+}
+
+function getCompleteSentenceBeforeTrailingEllipsis(
+  normalized: string,
+): string | null {
+  const prefix = getPrefixBeforeTrailingEllipsis(normalized);
+  if (!prefix) {
     return null;
   }
-  return trimmed;
+  const sentences = extractCompleteSentences(prefix);
+  const sentence = sentences[sentences.length - 1];
+  if (!sentence) {
+    return null;
+  }
+  if (sentence.length < MIN_ELLIPSIS_FALLBACK_PREFIX) {
+    return null;
+  }
+  return sentence;
+}
+
+function extractCompleteSentences(normalized: string): string[] {
+  const sentenceEnds: number[] = [];
+  const sentenceEndPattern = /[.!?。！？](?=\s|$)/gu;
+  let match: RegExpExecArray | null;
+  while ((match = sentenceEndPattern.exec(normalized)) !== null) {
+    sentenceEnds.push(match.index + match[0].length);
+  }
+  const sentences: string[] = [];
+  let start = 0;
+  for (const end of sentenceEnds) {
+    const sentence = normalized.slice(start, end).trim();
+    if (sentence) {
+      sentences.push(sentence);
+    }
+    start = end;
+  }
+  return sentences;
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    output.push(value);
+  }
+  return output;
 }
 
 function buildSearchOrder(
@@ -1052,6 +1173,9 @@ export const pdfReaderTestUtils = {
   normalizeQuery,
   buildSearchOrder,
   stripTrailingEllipsis,
+  buildOrthographicFallbackQueries,
+  buildEllipsisFallbackQueries,
+  buildCompleteSentenceFallbackQueries,
   findLongestCommonSubstring,
   matchPageByLongestCommonSubstring,
 };

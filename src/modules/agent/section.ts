@@ -2,7 +2,6 @@ import { getLocaleID, getString } from "../../utils/locale";
 import { getPref, setPref } from "../../utils/prefs";
 import {
   AgentContextOptions,
-  buildContextPreview,
   buildRequestMessagesWithContext,
   getDefaultContextOptions,
 } from "./context";
@@ -45,14 +44,7 @@ import {
   loadConversationFileStore,
   saveConversationFileStore,
 } from "./conversationFileStore";
-import {
-  getCustomContextForKey,
-  setCustomContextForKey,
-} from "./customContextStore";
-import {
-  resolveConversationScopeKey,
-  resolveCustomContextKey,
-} from "./itemScope";
+import { resolveConversationScopeKey } from "./itemScope";
 import {
   ReasoningEffortValue,
   buildModelContextMap,
@@ -135,17 +127,14 @@ import {
 import { renderMessageMarkdown } from "./markdown";
 import { truncateInline, formatShortDateTime } from "../../utils/text";
 import { copyTextToClipboard } from "../../utils/clipboard";
-import {
-  createInlineCopyButton,
-  showCopyFeedback,
-} from "../../utils/copyButton";
+import { showCopyFeedback } from "../../utils/copyButton";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
 const TYPEWRITER_DELAY_MS = 18;
 const SCROLL_BOTTOM_THRESHOLD_PX = 24;
 const MODEL_FETCH_TIMEOUT_MS = 25_000;
-const ROOT_HEIGHT_RATIO = 0.9;
+const ROOT_HEIGHT_RATIO = 0.85;
 const CHAT_MAX_ATTEMPTS = 2;
 const CHAT_RETRY_DELAY_MS = 700;
 const CONVERSATION_STORE_SAVE_DELAY_MS = 1200;
@@ -174,14 +163,12 @@ interface AgentRuntime extends ConversationRuntimeState {
   streamingAssistant: MessagePointer | null;
   waitingAssistant: MessagePointer | null;
   waitingStartedAt: number | null;
-  waitingStep: number;
   waitingToken: number;
   requestToken: number;
   cancelRequested: boolean;
   cancelActiveRequest: (() => void) | null;
   shouldAutoScroll: boolean;
   templateID: string;
-  contextOptions: AgentContextOptions;
   modelOptionsBySource: Map<string, string[]>;
   modelContextBySource: Map<string, Map<string, number>>;
   modelReasoningBySource: Map<string, Map<string, ReasoningEffortValue[]>>;
@@ -190,13 +177,11 @@ interface AgentRuntime extends ConversationRuntimeState {
   modelFetchStatusKind: "success" | "error" | "";
   webSearchStatusMessage: string;
   webSearchStatusKind: "success" | "error" | "";
-  customContextOpen: boolean;
-  contextPreviewOpen: boolean;
-  diagnosticsOpen: boolean;
   diagnostics: DiagnosticEntry[];
   refreshers: Map<string, () => Promise<void>>;
   pendingToolFollowUp: Map<string, PendingToolFollowUp>;
   activeToolEventByKey: Map<string, number>;
+  latestToolEventByKey: Map<string, number>;
   approvedAnnotationOperationKeys: Set<string>;
   detectedToolActionByKey: Set<string>;
   pendingToolActionContentByMessage: Map<string, string>;
@@ -227,14 +212,12 @@ const runtime: AgentRuntime = {
   streamingAssistant: null,
   waitingAssistant: null,
   waitingStartedAt: null,
-  waitingStep: 0,
   waitingToken: 0,
   requestToken: 0,
   cancelRequested: false,
   cancelActiveRequest: null,
   shouldAutoScroll: true,
   templateID: DEFAULT_PROMPT_TEMPLATE_ID,
-  contextOptions: getDefaultContextOptions(),
   modelOptionsBySource: new Map(),
   modelContextBySource: new Map(),
   modelReasoningBySource: new Map(),
@@ -243,13 +226,11 @@ const runtime: AgentRuntime = {
   modelFetchStatusKind: "",
   webSearchStatusMessage: "",
   webSearchStatusKind: "",
-  customContextOpen: false,
-  contextPreviewOpen: false,
-  diagnosticsOpen: false,
   diagnostics: [],
   refreshers: new Map(),
   pendingToolFollowUp: new Map(),
   activeToolEventByKey: new Map(),
+  latestToolEventByKey: new Map(),
   approvedAnnotationOperationKeys: new Set(),
   detectedToolActionByKey: new Set(),
   pendingToolActionContentByMessage: new Map(),
@@ -366,7 +347,6 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     renderConversationStoreLoading(body, doc);
     return;
   }
-  const customContextKey = resolveCustomContextKey(item);
   const conversationScopeKey = resolveConversationScopeKey(item);
   const conversation = getActiveConversationForScope(conversationScopeKey);
   const conversationKey = conversation.key;
@@ -388,60 +368,34 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
 
   const messages = doc.createElement("div");
   messages.className = "za-agent-messages";
-  if (!conversationMessages.length) {
-    const empty = doc.createElement("div");
-    empty.className = "za-agent-empty";
-    empty.textContent = getString("agent-empty-state");
-    messages.appendChild(empty);
-  } else {
-    for (const [index, message] of conversationMessages.entries()) {
-      if (message.kind === "tool-event") {
-        const eventBubble = renderToolEventBubble(doc, message);
-        if (eventBubble) {
-          messages.appendChild(eventBubble);
-        }
-        continue;
-      }
-      // Tool-result messages are kept in conversation history so future
-      // requests can pair them with the preceding assistant tool_calls turn,
-      // but they have no UI of their own — the tool-event bubble above
-      // already conveys progress to the user.
-      if (message.role === "tool") {
-        continue;
-      }
-      const bubble = doc.createElement("div");
-      bubble.className = `za-agent-message za-agent-${message.role}`;
-      const isStreamingCurrent = pointsToMessage(
-        runtime.streamingAssistant,
-        conversationKey,
-        index,
-      );
-      const isWaitingCurrent = pointsToMessage(
-        runtime.waitingAssistant,
-        conversationKey,
-        index,
-      );
-      if (isStreamingCurrent) {
-        bubble.classList.add("za-agent-streaming");
-      }
-      if (isWaitingCurrent && !message.content.trim()) {
-        bubble.classList.add("za-agent-waiting");
-        const waitingText = doc.createElement("div");
-        waitingText.className = "za-agent-message-content";
-        waitingText.textContent = `${getString("agent-waiting-label")}${".".repeat(runtime.waitingStep + 1)}`;
-        bubble.append(waitingText, createMessageMeta(doc, message));
-      } else {
-        const content = doc.createElement("div");
-        content.className = "za-agent-message-content";
-        renderMessageMarkdown(content, message.content);
-        bubble.append(
-          content,
-          createMessageMeta(doc, message),
-          createCopyButton(doc, message.content),
-        );
-      }
-      messages.appendChild(bubble);
+  let renderedMessages = 0;
+  for (const [index, message] of conversationMessages.entries()) {
+    if (message.kind === "tool-event" || message.role === "tool") {
+      continue;
     }
+    if (message.role === "assistant" && !message.content.trim()) {
+      continue;
+    }
+    const bubble = doc.createElement("div");
+    bubble.className = `za-agent-message za-agent-${message.role}`;
+    const isStreamingCurrent = pointsToMessage(
+      runtime.streamingAssistant,
+      conversationKey,
+      index,
+    );
+    if (isStreamingCurrent) {
+      bubble.classList.add("za-agent-streaming");
+    }
+    const content = doc.createElement("div");
+    content.className = "za-agent-message-content";
+    renderMessageMarkdown(content, message.content);
+    bubble.append(
+      content,
+      createMessageMeta(doc, message),
+      createCopyButton(doc, message.content),
+    );
+    messages.appendChild(bubble);
+    renderedMessages += 1;
   }
   messages.addEventListener("scroll", () => {
     if (runtime.sending) {
@@ -485,6 +439,20 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
         },
       }),
     );
+    renderedMessages += 1;
+  }
+
+  const activityStatus = renderActivityStatus(doc, conversationKey);
+  if (activityStatus) {
+    messages.appendChild(activityStatus);
+    renderedMessages += 1;
+  }
+
+  if (!renderedMessages) {
+    const empty = doc.createElement("div");
+    empty.className = "za-agent-empty";
+    empty.textContent = getString("agent-empty-state");
+    messages.appendChild(empty);
   }
 
   const composer = doc.createElement("div");
@@ -655,46 +623,6 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   contextRow.append(
     createContextToggle(
       doc,
-      "agent-context-metadata",
-      runtime.contextOptions.includeMetadata,
-      runtime.sending,
-      (nextValue) => {
-        runtime.contextOptions.includeMetadata = nextValue;
-        void refreshAllSections();
-      },
-    ),
-    createContextToggle(
-      doc,
-      "agent-context-notes",
-      runtime.contextOptions.includeNotes,
-      runtime.sending,
-      (nextValue) => {
-        runtime.contextOptions.includeNotes = nextValue;
-        void refreshAllSections();
-      },
-    ),
-    createContextToggle(
-      doc,
-      "agent-context-annotations",
-      runtime.contextOptions.includeAnnotations,
-      runtime.sending,
-      (nextValue) => {
-        runtime.contextOptions.includeAnnotations = nextValue;
-        void refreshAllSections();
-      },
-    ),
-    createContextToggle(
-      doc,
-      "agent-context-selected-text",
-      runtime.contextOptions.includeSelectedText,
-      runtime.sending,
-      (nextValue) => {
-        runtime.contextOptions.includeSelectedText = nextValue;
-        void refreshAllSections();
-      },
-    ),
-    createContextToggle(
-      doc,
       "agent-web-search-toggle",
       isWebSearchEnabled(),
       runtime.sending,
@@ -726,23 +654,7 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
       },
     ),
   );
-  controls.append(
-    modelRow,
-    templateRow,
-    contextRow,
-    createCustomContextInput(doc, customContextKey),
-    createContextPreview(
-      doc,
-      item,
-      {
-        providerID,
-        baseURL,
-        model: currentModel,
-      },
-      customContextKey,
-    ),
-    createDiagnosticsPanel(doc),
-  );
+  controls.append(modelRow, templateRow, contextRow);
   if (runtime.modelFetchStatusMessage) {
     const status = doc.createElement("div");
     status.className = "za-agent-model-status";
@@ -752,16 +664,6 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     status.textContent = runtime.modelFetchStatusMessage;
     controls.append(status);
   }
-  if (runtime.webSearchStatusMessage) {
-    const status = doc.createElement("div");
-    status.className = "za-agent-model-status";
-    if (runtime.webSearchStatusKind) {
-      status.dataset.kind = runtime.webSearchStatusKind;
-    }
-    status.textContent = runtime.webSearchStatusMessage;
-    controls.append(status);
-  }
-
   const composerLocked = hasPendingBatch(conversationKey);
 
   const input = doc.createElement("input");
@@ -798,6 +700,7 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     runtime.requestToken += 1;
     runtime.webSearchStatusMessage = "";
     runtime.webSearchStatusKind = "";
+    runtime.latestToolEventByKey.delete(conversationKey);
     const requestToken = runtime.requestToken;
     conversation.messages.push({
       role: "user",
@@ -807,8 +710,7 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     touchConversation(conversation);
     const requestMessages = toProviderMessages(conversation.messages);
     const templateID = runtime.templateID;
-    const contextOptions = { ...runtime.contextOptions };
-    const customContext = getCustomContextForKey(customContextKey);
+    const contextOptions = getAutomaticContextOptions();
     const modelContextWindow = resolveModelContextWindow(
       providerID,
       baseURL,
@@ -837,7 +739,7 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
         item,
         contextOptions,
         templateID,
-        customContext,
+        customContext: "",
         modelContextWindow,
         prompt,
       },
@@ -865,15 +767,11 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   });
 
   composer.append(input, sendButton);
-  const activityStatus = renderActivityStatus(doc, conversationKey);
   const rootChildren: HTMLElement[] = [
     createSessionControls(doc, conversationScopeKey, conversation),
     messages,
     controls,
   ];
-  if (activityStatus) {
-    rootChildren.push(activityStatus);
-  }
   rootChildren.push(composer);
   root.append(...rootChildren);
   body.replaceChildren(root);
@@ -1021,18 +919,17 @@ function appendToolEventMessage(
   if (!conversation) {
     return -1;
   }
+  if (normalizeToolKind(toolType) !== "web-search") {
+    clearWebSearchStatus();
+  }
   const index =
     conversation.messages.push(createRunningToolEventMessage(toolType)) - 1;
   runtime.activeToolEventByKey.set(conversationKey, index);
+  runtime.latestToolEventByKey.set(conversationKey, index);
   if (runtime.sending) {
     startWorkingState(conversationKey);
   }
   touchConversationByKey(conversationKey);
-  if (runtime.sending) {
-    runtime.waitingToken += 1;
-    const token = runtime.waitingToken;
-    void runWaitingLoop(token);
-  }
   return index;
 }
 
@@ -2136,7 +2033,7 @@ function buildMissingToolActionRepairPrompt(): string {
       '读取 PDF 全文: {"action":"read_pdf"}',
       '从第 4 页开始读取: {"action":"read_pdf","action_input":{"fromPage":4}}',
       '修正高亮: {"action":"propose_annotation","action_input":{"type":"highlight","pageLabel":"16","text":"该页内连续出现的 PDF 原文","comment":"批注内容","color":"#ffd400"}}',
-      '联网搜索: {"action":"联网搜索","action_input":{"query":"检索词"}}',
+      '联网搜索: {"action":"联网搜索","action_input":{"query":"检索词","maxResults":20}}',
       "高亮/下划线 text 必须是单页内连续出现的 PDF 原文；不要提交跨页 text，跨页内容请拆成每页一条。",
       "如果不需要工具,请直接给出最终回答。",
     ].join("\n");
@@ -2147,7 +2044,7 @@ function buildMissingToolActionRepairPrompt(): string {
     'Read the full PDF: {"action":"read_pdf"}',
     'Read from page 4 onward: {"action":"read_pdf","action_input":{"fromPage":4}}',
     'Repair a highlight: {"action":"propose_annotation","action_input":{"type":"highlight","pageLabel":"16","text":"continuous verbatim PDF text on that page","comment":"comment text","color":"#ffd400"}}',
-    'Web search: {"action":"web_search","action_input":{"query":"search terms"}}',
+    'Web search: {"action":"web_search","action_input":{"query":"search terms","maxResults":20}}',
     "Highlight/underline text must be a continuous verbatim PDF span from one page. Do not submit cross-page text; split cross-page highlights into one proposal per page.",
     "If no tool is needed, answer directly.",
   ].join("\n");
@@ -2563,6 +2460,18 @@ function isWebSearchEnabled() {
   return isWebSearchEnabledPref();
 }
 
+function getAutomaticContextOptions(): AgentContextOptions {
+  if (isPdfToolsEnabledPref()) {
+    return {
+      includeMetadata: false,
+      includeNotes: false,
+      includeAnnotations: false,
+      includeSelectedText: false,
+    };
+  }
+  return getDefaultContextOptions();
+}
+
 function buildToolActionFollowUpPrompt(
   toolType: string,
   toolResult: string,
@@ -2641,6 +2550,11 @@ function applyWebSearchStatus(status: WebSearchRunStatus) {
     default:
       return;
   }
+}
+
+function clearWebSearchStatus() {
+  runtime.webSearchStatusMessage = "";
+  runtime.webSearchStatusKind = "";
 }
 
 function resolveModelContextWindow(
@@ -3002,10 +2916,11 @@ function computeFixedRootHeight(body: HTMLDivElement) {
     "zotero-item-pane-content",
   ) as HTMLElement | null;
   const baseHeight = firstPositive(
+    doc.defaultView ? Math.floor(doc.defaultView.innerHeight) : 0,
+    doc.documentElement?.clientHeight,
     paneContent?.clientHeight,
     body.parentElement?.clientHeight,
     body.clientHeight,
-    doc.defaultView ? Math.floor(doc.defaultView.innerHeight) : 0,
   );
   return Math.max(220, Math.floor(baseHeight * ROOT_HEIGHT_RATIO));
 }
@@ -3107,6 +3022,7 @@ function clearConversationMessages(conversationKey: string) {
     return;
   }
   runtime.activeToolEventByKey.delete(conversationKey);
+  runtime.latestToolEventByKey.delete(conversationKey);
   clearWorkingState(conversationKey);
   flushConversationStore();
 }
@@ -3123,6 +3039,7 @@ function deleteConversation(scopeKey: string, conversationKey: string) {
     return;
   }
   runtime.activeToolEventByKey.delete(conversationKey);
+  runtime.latestToolEventByKey.delete(conversationKey);
   clearWorkingState(conversationKey);
   flushConversationStore();
 }
@@ -3228,6 +3145,7 @@ function finishActiveRequest(conversationKey: string, requestToken: number) {
     getString("agent-tool-event-ended-unexpectedly"),
   );
   runtime.activeToolEventByKey.delete(conversationKey);
+  runtime.latestToolEventByKey.delete(conversationKey);
   runtime.detectedToolActionByKey.delete(conversationKey);
   runtime.requestToken += 1;
   flushConversationStore();
@@ -3253,10 +3171,7 @@ function startWaitingAnimation(
     messageIndex: assistantMessageIndex,
   };
   runtime.waitingStartedAt = Date.now();
-  runtime.waitingStep = 0;
   runtime.waitingToken += 1;
-  const token = runtime.waitingToken;
-  void runWaitingLoop(token);
 }
 
 function stopWaitingAnimation() {
@@ -3276,28 +3191,7 @@ function stopWaitingAnimation() {
   }
   runtime.waitingAssistant = null;
   runtime.waitingStartedAt = null;
-  runtime.waitingStep = 0;
   runtime.waitingToken += 1;
-  // If a tool event is still running, restart the animation loop so its dots
-  // and elapsed timer keep updating. Otherwise the loop has been invalidated
-  // above.
-  if (runtime.activeToolEventByKey.size > 0 && runtime.sending) {
-    const token = runtime.waitingToken;
-    void runWaitingLoop(token);
-  }
-}
-
-async function runWaitingLoop(token: number) {
-  while (runtime.waitingToken === token && runtime.sending) {
-    const hasWaiting = runtime.waitingAssistant !== null;
-    const hasRunningToolEvent = runtime.activeToolEventByKey.size > 0;
-    if (!hasWaiting && !hasRunningToolEvent) {
-      break;
-    }
-    runtime.waitingStep = (runtime.waitingStep + 1) % 3;
-    await refreshAllSections();
-    await Zotero.Promise.delay(320);
-  }
 }
 
 function renderActivityStatus(
@@ -3307,88 +3201,130 @@ function renderActivityStatus(
   if (!runtime.sending || runtime.workingConversationKey !== conversationKey) {
     return null;
   }
+  const statusInfo = getActivityStatusInfo(conversationKey);
+  if (!statusInfo) {
+    return null;
+  }
 
   const status = doc.createElement("div");
   status.className = "za-agent-activity-status";
+  // The row only renders while the request chain is active, so keep the
+  // spinner running even when the latest sub-step says "done" and the model is
+  // still composing a follow-up.
+  status.dataset.kind = "running";
+  if (statusInfo.kind === "failed") {
+    status.dataset.tone = "error";
+  }
 
   const indicator = doc.createElement("span");
   indicator.className = "za-agent-activity-indicator";
+  indicator.style.animationDelay = `-${Date.now() % 850}ms`;
 
   const label = doc.createElement("span");
   label.className = "za-agent-activity-label";
-  label.textContent = runtime.detectedToolActionByKey.has(conversationKey)
-    ? getString("agent-tool-detected-label")
-    : getString("agent-working-label");
+  label.textContent = statusInfo.label;
 
   status.append(indicator, label);
   return status;
 }
 
-function renderToolEventBubble(
-  doc: Document,
-  message: RuntimeMessage,
-): HTMLElement | null {
-  const event = message.toolEvent;
-  if (!event) {
+function getActivityStatusInfo(
+  conversationKey: string,
+): { label: string; kind: "running" | "done" | "failed" } | null {
+  const activeEvent = getToolEventByIndex(
+    conversationKey,
+    runtime.activeToolEventByKey.get(conversationKey),
+  );
+  if (activeEvent) {
+    return formatToolEventStatus(activeEvent);
+  }
+  const latestEvent = getToolEventByIndex(
+    conversationKey,
+    runtime.latestToolEventByKey.get(conversationKey),
+  );
+  if (latestEvent) {
+    if (
+      normalizeToolKind(latestEvent.toolType) === "web-search" &&
+      runtime.webSearchStatusMessage
+    ) {
+      return formatWebSearchStatus();
+    }
+    return formatToolEventStatus(latestEvent);
+  }
+  if (runtime.webSearchStatusMessage) {
+    return formatWebSearchStatus();
+  }
+  if (runtime.detectedToolActionByKey.has(conversationKey)) {
+    return {
+      label: formatRunningStatusLabel(getString("agent-tool-detected-label")),
+      kind: "running",
+    };
+  }
+  return {
+    label: formatRunningStatusLabel(getString("agent-working-label")),
+    kind: "running",
+  };
+}
+
+function formatWebSearchStatus(): {
+  label: string;
+  kind: "running" | "done" | "failed";
+} {
+  return {
+    label:
+      runtime.webSearchStatusKind === ""
+        ? formatRunningStatusLabel(runtime.webSearchStatusMessage)
+        : runtime.webSearchStatusMessage,
+    kind:
+      runtime.webSearchStatusKind === "error"
+        ? "failed"
+        : runtime.webSearchStatusKind === "success"
+          ? "done"
+          : "running",
+  };
+}
+
+function getToolEventByIndex(
+  conversationKey: string,
+  messageIndex: number | undefined,
+) {
+  if (typeof messageIndex !== "number") {
     return null;
   }
+  const message = getConversationMessage(conversationKey, messageIndex);
+  return message?.kind === "tool-event" ? message.toolEvent || null : null;
+}
+
+function formatToolEventStatus(
+  event: NonNullable<RuntimeMessage["toolEvent"]>,
+) {
   const toolKind = normalizeToolKind(event.toolType);
-  const bubble = doc.createElement("div");
-  bubble.className = "za-agent-tool-event";
-  bubble.classList.add(`za-agent-tool-event-${event.status}`);
-
-  const row = doc.createElement("div");
-  row.className = "za-agent-tool-event-row";
-
-  const indicator = doc.createElement("span");
-  indicator.className = "za-agent-tool-event-indicator";
-  row.append(indicator);
-
-  const labelNode = doc.createElement("span");
-  labelNode.className = "za-agent-tool-event-label";
-  let label: string;
   if (event.status === "running") {
-    const base = getString(getToolEventLabelID(toolKind, "running")).replace(
-      /\.+$/,
-      "",
-    );
-    const dots = ".".repeat(runtime.waitingStep + 1);
-    label = `${base}${dots}`;
-  } else if (event.status === "done") {
-    label = getString(getToolEventLabelID(toolKind, "done"));
-  } else {
-    label = getString(getToolEventLabelID(toolKind, "failed"));
+    return {
+      label: formatRunningStatusLabel(
+        getString(getToolEventLabelID(toolKind, "running")),
+      ),
+      kind: "running" as const,
+    };
   }
-  labelNode.textContent = label;
-  row.append(labelNode);
-
-  const elapsedMs =
-    event.status === "running"
-      ? Date.now() - event.startedAt
-      : (event.finishedAt ?? event.startedAt) - event.startedAt;
-  const meta = doc.createElement("span");
-  meta.className = "za-agent-tool-event-meta";
-  meta.textContent = getString("agent-tool-event-elapsed", {
-    args: { seconds: formatWaitSeconds(elapsedMs) },
-  });
-  row.append(meta);
-  bubble.append(row);
-
-  if (event.status === "failed" && event.errorMessage) {
-    const detail = doc.createElement("div");
-    detail.className = "za-agent-tool-event-detail";
-    const text = doc.createElement("span");
-    text.className = "za-agent-tool-event-detail-text";
-    text.textContent = event.errorMessage;
-    const copyButton = createInlineCopyButton(
-      doc,
-      () => event.errorMessage || "",
-    );
-    detail.append(text, copyButton);
-    bubble.append(detail);
+  if (event.status === "done") {
+    return {
+      label: getString(getToolEventLabelID(toolKind, "done")),
+      kind: "done" as const,
+    };
   }
+  const base = getString(getToolEventLabelID(toolKind, "failed"));
+  const detail = event.errorMessage
+    ? `: ${truncateInline(event.errorMessage, 120)}`
+    : "";
+  return {
+    label: `${base}${detail}`,
+    kind: "failed" as const,
+  };
+}
 
-  return bubble;
+function formatRunningStatusLabel(label: string) {
+  return label;
 }
 
 function createMessageMeta(doc: Document, message: RuntimeMessage) {
@@ -3431,16 +3367,6 @@ function formatMessageDateTime(timestamp: number) {
 function formatWaitSeconds(durationMs: number) {
   const seconds = Math.max(0, durationMs) / 1000;
   return seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1);
-}
-
-function formatTokenCount(count: number) {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      maximumFractionDigits: 0,
-    }).format(count);
-  } catch {
-    return String(Math.round(count));
-  }
 }
 
 function recordDiagnostic(
@@ -3714,10 +3640,6 @@ function showToast(message: string) {
 function createContextToggle(
   doc: Document,
   labelKey:
-    | "agent-context-metadata"
-    | "agent-context-notes"
-    | "agent-context-annotations"
-    | "agent-context-selected-text"
     | "agent-web-search-toggle"
     | "agent-pdf-tools-toggle"
     | "agent-pdf-tools-auto-apply",
@@ -3738,207 +3660,6 @@ function createContextToggle(
   text.textContent = getString(labelKey);
   label.append(checkbox, text);
   return label;
-}
-
-function createDiagnosticsPanel(doc: Document) {
-  const details = doc.createElement("details");
-  details.className = "za-agent-diagnostics";
-  details.open = runtime.diagnosticsOpen;
-  details.addEventListener("toggle", () => {
-    runtime.diagnosticsOpen = details.open;
-  });
-
-  const summary = doc.createElement("summary");
-  summary.className = "za-agent-diagnostics-summary";
-
-  const title = doc.createElement("span");
-  title.className = "za-agent-diagnostics-title";
-  title.textContent = getString("agent-diagnostics-title");
-
-  const count = doc.createElement("span");
-  count.className = "za-agent-diagnostics-count";
-  count.textContent = String(runtime.diagnostics.length);
-  summary.append(title, count);
-
-  const body = doc.createElement("div");
-  body.className = "za-agent-diagnostics-body";
-  if (!runtime.diagnostics.length) {
-    const empty = doc.createElement("div");
-    empty.className = "za-agent-diagnostics-empty";
-    empty.textContent = getString("agent-diagnostics-empty");
-    body.appendChild(empty);
-  } else {
-    const clearButton = doc.createElement("button");
-    clearButton.className = "za-agent-secondary-button";
-    clearButton.type = "button";
-    clearButton.textContent = getString("agent-diagnostics-clear");
-    clearButton.addEventListener("click", () => {
-      runtime.diagnostics = [];
-      void refreshAllSections();
-    });
-    body.appendChild(clearButton);
-    for (const entry of runtime.diagnostics.slice().reverse()) {
-      const item = doc.createElement("div");
-      item.className = "za-agent-diagnostic-entry";
-      item.dataset.level = entry.level;
-
-      const meta = doc.createElement("div");
-      meta.className = "za-agent-diagnostic-meta";
-      meta.textContent = `${formatMessageDateTime(entry.createdAt)} · ${entry.level}`;
-
-      const message = doc.createElement("div");
-      message.className = "za-agent-diagnostic-message";
-      message.textContent = entry.message;
-      item.append(meta, message);
-
-      if (entry.detail) {
-        const detail = doc.createElement("pre");
-        detail.className = "za-agent-diagnostic-detail";
-        detail.textContent = entry.detail;
-        item.appendChild(detail);
-      }
-      body.appendChild(item);
-    }
-  }
-
-  details.append(summary, body);
-  return details;
-}
-
-function createCustomContextInput(doc: Document, customContextKey: string) {
-  const container = doc.createElement("details");
-  container.className = "za-agent-custom-context";
-  container.open = runtime.customContextOpen;
-  container.addEventListener("toggle", () => {
-    runtime.customContextOpen = container.open;
-  });
-
-  const summary = doc.createElement("summary");
-  summary.className = "za-agent-custom-context-summary";
-
-  const label = doc.createElement("span");
-  label.className = "za-agent-custom-context-title";
-  label.textContent = getString("agent-custom-context-label");
-
-  const currentContext = getCustomContextForKey(customContextKey);
-  summary.appendChild(label);
-  if (currentContext.trim()) {
-    const status = doc.createElement("span");
-    status.className = "za-agent-custom-context-status";
-    status.textContent = getString("agent-custom-context-filled");
-    summary.appendChild(status);
-  }
-
-  const textarea = doc.createElement("textarea");
-  textarea.className = "za-agent-custom-context-input";
-  textarea.placeholder = getString("agent-custom-context-placeholder");
-  textarea.value = currentContext;
-  textarea.disabled = runtime.sending;
-  textarea.rows = 3;
-  textarea.addEventListener("input", () => {
-    setCustomContextForKey(customContextKey, textarea.value);
-  });
-  textarea.addEventListener("change", () => {
-    setCustomContextForKey(customContextKey, textarea.value);
-    void refreshAllSections();
-  });
-  textarea.addEventListener("blur", () => {
-    setCustomContextForKey(customContextKey, textarea.value);
-    void refreshAllSections();
-  });
-
-  container.append(summary, textarea);
-  return container;
-}
-
-function createContextPreview(
-  doc: Document,
-  item: Zotero.Item | null,
-  modelRef: { providerID: string; baseURL: string; model: string },
-  customContextKey: string,
-) {
-  const modelContextWindow = resolveModelContextWindow(
-    modelRef.providerID,
-    modelRef.baseURL,
-    modelRef.model,
-  );
-  const preview = buildContextPreview({
-    item,
-    contextOptions: runtime.contextOptions,
-    templateID: runtime.templateID,
-    customContext: getCustomContextForKey(customContextKey),
-    modelContextWindow,
-  });
-  const details = doc.createElement("details");
-  details.className = "za-agent-context-preview";
-  details.open = runtime.contextPreviewOpen;
-  details.addEventListener("toggle", () => {
-    runtime.contextPreviewOpen = details.open;
-  });
-
-  const summary = doc.createElement("summary");
-  summary.className = "za-agent-context-preview-summary";
-
-  const title = doc.createElement("span");
-  title.className = "za-agent-context-preview-title";
-  title.textContent = getString("agent-context-preview-title");
-
-  const budgets = doc.createElement("span");
-  budgets.className = "za-agent-context-budgets";
-
-  const injectionBudget = doc.createElement("span");
-  injectionBudget.className = "za-agent-context-budget";
-  injectionBudget.textContent = getString("agent-context-preview-budget", {
-    args: {
-      used: formatTokenCount(preview.estimatedTokens),
-      budget: formatTokenCount(preview.tokenBudget),
-    },
-  });
-  if (preview.truncated || preview.estimatedTokens > preview.tokenBudget) {
-    injectionBudget.dataset.kind = "warning";
-  }
-
-  const modelLimit = doc.createElement("span");
-  modelLimit.className = "za-agent-context-budget";
-  modelLimit.textContent = getString("agent-context-preview-model-limit", {
-    args: {
-      limit: modelContextWindow
-        ? `${formatTokenCount(modelContextWindow)} tokens`
-        : getString("agent-context-preview-model-limit-unknown"),
-    },
-  });
-  if (!modelContextWindow) {
-    modelLimit.dataset.kind = "muted";
-  }
-  budgets.append(injectionBudget, modelLimit);
-  summary.append(title, budgets);
-
-  const body = doc.createElement("div");
-  body.className = "za-agent-context-preview-body";
-  const readonlyNote = doc.createElement("div");
-  readonlyNote.className = "za-agent-context-preview-note";
-  readonlyNote.textContent = getString("agent-context-preview-readonly");
-  body.appendChild(readonlyNote);
-  if (!preview.hasZoteroContext) {
-    const empty = doc.createElement("div");
-    empty.className = "za-agent-context-preview-note";
-    empty.textContent = getString("agent-context-preview-system-only");
-    body.appendChild(empty);
-  }
-  if (preview.truncated) {
-    const warning = doc.createElement("div");
-    warning.className = "za-agent-context-preview-note";
-    warning.dataset.kind = "warning";
-    warning.textContent = getString("agent-context-preview-truncated");
-    body.appendChild(warning);
-  }
-
-  const text = doc.createElement("pre");
-  text.className = "za-agent-context-preview-text";
-  text.textContent = preview.text || getString("agent-context-preview-empty");
-  body.appendChild(text);
-  details.append(summary, body);
-  return details;
 }
 
 function createCopyButton(doc: Document, messageContent: string) {

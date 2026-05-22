@@ -240,6 +240,33 @@ describe("pdf tools logic", function () {
       assert.isNull(noHyphenMatch);
     });
 
+    it("falls back for cannot/can not and line-break compound hyphen variants", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "Therefore, clustering cannot only isolate malicious clients but also improve the accuracy of intra-",
+          x: 0,
+          y: 0,
+          width: 540,
+          height: 10,
+        },
+        {
+          text: "cluster models.",
+          x: 540,
+          y: 0,
+          width: 80,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "Therefore, clustering can not only isolate malicious clients but also improve the accuracy of intra-cluster models.",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+      assert.equal(match?.pageIndex, 0);
+    });
+
     it("strips zero-width formatting chars from PDF spans", function () {
       const page = makePage(0, 800, [
         { text: "first​word", x: 0, y: 0, width: 60, height: 10 },
@@ -282,6 +309,65 @@ describe("pdf tools logic", function () {
         "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate...",
       );
       assert.isNotNull(asciiMatch);
+    });
+
+    it("falls back to the complete sentence before an ellipsis-truncated fragment", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "In contrast, our method maintains high accuracy in both normal and attack settings, with an average decrease of less than 1%.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+        {
+          text: "The improvement is especially clear in the strongest attack setting.",
+          x: 0,
+          y: 20,
+          width: 480,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        null,
+        "In contrast, our method maintains high accuracy in both normal and attack settings, with an average decrease of less than 1%. The improveme…",
+      );
+      assert.isNotNull(match);
+      assert.equal(
+        match?.matchedText,
+        "In contrast, our method maintains high accuracy in both normal and attack settings, with an average decrease of less than 1%.",
+      );
+    });
+
+    it("falls back to a complete sentence when a long quote has a nonverbatim continuation", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "We investigate how to train contrastive learning models fine-tuned with LoRA in a federated learning environment.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+        {
+          text: "The proposed protocol combines client sampling with robust aggregation.",
+          x: 0,
+          y: 20,
+          width: 480,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "We investigate how to train contrastive learning models fine-tuned with LoRA in a federated learning environment. We propose an advanced personalized approach for malicious-client resistance.",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+      assert.equal(
+        match?.matchedText,
+        "We investigate how to train contrastive learning models fine-tuned with LoRA in a federated learning environment.",
+      );
     });
 
     it("does not accept an over-short prefix when stripping an ellipsis", function () {

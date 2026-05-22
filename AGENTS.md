@@ -22,7 +22,7 @@ Zotero-Cat is independent from Zotero. Public docs should include a non-affiliat
 
 Zotero-Cat is a Zotero item-pane assistant. It uses Zotero's official `ItemPaneManager.registerSection` API, so it appears as a section in Zotero's existing right item pane. It does not replace Zotero's native right sidebar and does not try to own the full pane.
 
-The current implementation covers MVP, Zotero context injection, streaming chat UX, per-item history, persistence, diagnostics, Phase 3.5 engineering quality, repository-side Phase 4 release preparation, optional web search tooling, tool-action orchestration, persistent custom context, session export/rename/favorite controls, and experimental PDF tool agency. PDF tool agency currently includes `read_pdf`, `list_annotations`, annotation proposal generation, Accept / Reject / Accept All / Reject All review cards, optional auto-apply, and Zotero annotation create/update/delete wrappers. Structure work moved model metadata parsing, conversation persistence, item scoping, retry classification, shared message types, web search logic, tool-action parsing, PDF text extraction, annotation persistence, and proposal state out of the item-pane UI file. Release docs, changelog, provider setup notes, privacy notes, and the direct GitHub release workflow are present. Public Markdown intended for users has English and Chinese versions; `README.md` remains the English GitHub homepage and links to `README.zh-CN.md`.
+The current implementation covers MVP, Zotero context injection, streaming chat UX, per-item history, persistence, internal diagnostics, Phase 3.5 engineering quality, repository-side Phase 4 release preparation, optional web search tooling, tool-action orchestration, session export/rename/favorite controls, and experimental PDF tool agency. PDF tool agency currently includes `read_pdf`, `list_annotations`, annotation proposal generation, Accept / Reject / Accept All / Reject All review cards, optional auto-apply, and Zotero annotation create/update/delete wrappers. Structure work moved model metadata parsing, conversation persistence, item scoping, retry classification, shared message types, web search logic, tool-action parsing, PDF text extraction, annotation persistence, and proposal state out of the item-pane UI file. Release docs, changelog, provider setup notes, privacy notes, and the direct GitHub release workflow are present. Public Markdown intended for users has English and Chinese versions; `README.md` remains the English GitHub homepage and links to `README.zh-CN.md`.
 
 The current public release is `v0.2.0`. It promotes the first experimental PDF-tool milestone behind the `PDF tools` toggle. The public release asset is `zotero-cat.xpi` under the version tag. The special GitHub release tag named `release` is used only for updater manifests and should remain marked as pre-release and not Latest. Zotero 10 beta compatibility is still not declared; keep `strict_max_version` at `9.*` until the current Zotero beta line passes the manual checklist.
 
@@ -69,25 +69,24 @@ Responsibilities:
 - Register and unregister the item-pane section.
 - Render the full chat UI.
 - Manage runtime UI state.
-- Handle send, stop, retry, streaming output, copy feedback, diagnostics, model selection, context controls, and session controls.
+- Handle send, stop, retry, streaming output, copy feedback, internal diagnostics, model selection, tool toggles, and session controls.
 - Coordinate conversation loading and saving through `conversationFileStore.ts`, and keep in-memory session selection/mutation in `conversationRuntime.ts`.
 - Render annotation proposal batches and route accepted proposals through the PDF annotation tool wrappers.
 
 Important UI decisions:
 
-- The chat panel uses fixed height. The current TODO states 90 percent height.
+- The chat panel uses a fixed height derived from 85 percent of the visible page.
 - The input composer belongs at the bottom of the panel.
 - The session selector stays at the top of the chat area.
 - History uses a native dropdown, not a custom lazy list.
 - The dropdown shows up to 8 recent conversations for the current Zotero item.
-- Custom context stays folded until the user opens it.
-- Custom context persists per item through `customContextStore`.
-- Provided Zotero context is read-only in preview.
+- Custom context, context preview, and diagnostics disclosure panels are not rendered in the chat controls.
+- The item-pane UI does not inject custom context text.
 - Session controls support export, rename, and favorite.
 - PDF tools are off by default and exposed from the chat controls.
 - PDF write actions must become proposal cards first; direct model-driven annotation mutation is not allowed.
 - The composer is locked while a proposal batch is pending.
-- Long-running requests show a persistent activity status above the composer so model/tool follow-up work is visible even when no new text is streaming.
+- Long-running requests show one persistent activity status inside the message list so model/tool follow-up work is visible even when no new text is streaming. The status should reflect the currently running tool, such as web search, PDF read, annotation preparation, or annotation application.
 
 Do not convert this into a full replacement sidebar unless the product direction changes. The current strategy favors plugin-template compatibility and low blast radius inside Zotero.
 
@@ -99,7 +98,7 @@ Pure logic lives outside `section.ts` so it can be tested without importing the 
 - `src/modules/agent/modelMetadata.ts`: model endpoint candidate generation, model-list parsing, context-window extraction, reasoning-effort extraction, and model endpoint retry classification.
 - `src/modules/agent/conversationStore.ts`: conversation state types, defensive persistence parsing, serialization, capacity limits, and active-conversation payload building.
 - `src/modules/agent/conversationRuntime.ts`: in-memory conversation maps, active-session selection, session mutation, message-pointer checks, provider-message projection, and `sanitizeToolCallSequences` — the defensive filter that strips orphan assistant `tool_calls` / orphan `role: "tool"` messages before they reach the provider.
-- `src/modules/agent/customContextStore.ts`: per-item custom context loading, defensive pref parsing, mutation, and persistence.
+- `src/modules/agent/customContextStore.ts`: legacy per-item custom context loading, defensive pref parsing, mutation, and persistence. The current item-pane UI does not render or inject custom context.
 - `src/modules/agent/itemScope.ts`: parent-item resolution and stable per-item scope keys.
 - `src/modules/agent/chatRetry.ts`: retry classification for recoverable chat failures and abort/cancel detection.
 - `src/modules/agent/runtimeIds.ts`: runtime ID generation for sessions and diagnostics.
@@ -151,12 +150,11 @@ Supported context:
 - Notes.
 - PDF annotations.
 - Selected text from Zotero reader.
-- User custom context from the chat UI.
 - Optional web search context passed through `externalContext`.
 
 Selected text capture happens through Zotero reader event handling in `src/hooks.ts`, then context assembly reads the remembered text.
 
-Context preview uses Zotero's current language. The token budget is an estimate and should be described as an estimate, not exact tokenizer output.
+The token budget is an estimate and should be described as an estimate, not exact tokenizer output.
 
 ### Tool layer
 
@@ -279,7 +277,7 @@ Payload shape:
 }
 ```
 
-Conversations support optional `title` and `favorite` fields. The `customContextStore` pref stores per-item custom context as a JSON object keyed by custom context key.
+Conversations support optional `title` and `favorite` fields. The legacy `customContextStore` pref may store per-item custom context as a JSON object keyed by custom context key, but the current chat UI does not render or inject custom context.
 
 Persistence limits:
 
@@ -295,7 +293,7 @@ Storage behavior:
 - Active conversation pointer persists per scope.
 - Empty conversations do not persist.
 - On first successful disk save after legacy pref migration, the old `agentConversationStore` pref is cleared.
-- Custom context persists per item in `extensions.zotero.zoterocat.customContextStore`.
+- Legacy custom context data may exist per item in `extensions.zotero.zoterocat.customContextStore`, but the current item-pane UI does not write or inject it.
 - High-frequency streaming/tool paths should call the scheduled `saveConversationStore()` only. Use immediate flush only for stable user actions or final request cleanup.
 - In-memory `conversation.messages` retains `role: "tool"` runtime messages and the originating `assistant.toolCalls` for the lifetime of a session so provider requests stay well-formed across multi-turn replays. Disk serialization deliberately drops both (only `user` / `assistant` plain-text content is persisted) — on reload there are no orphans because `toolCalls` is not restored either. The `sanitizeToolCallSequences` filter inside `toProviderMessages` is the last-line guard against mid-session cancellations or partial failures leaving an orphan assistant `tool_calls`.
 
@@ -391,7 +389,7 @@ Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` p
 - `src/modules/agent/modelMetadata.ts`: model endpoint and metadata parsing.
 - `src/modules/agent/conversationStore.ts`: session history parsing and persistence serialization.
 - `src/modules/agent/conversationRuntime.ts`: in-memory session selection and mutation helpers.
-- `src/modules/agent/customContextStore.ts`: per-item custom context pref storage.
+- `src/modules/agent/customContextStore.ts`: legacy per-item custom context pref storage.
 - `src/modules/agent/itemScope.ts`: item scope keys.
 - `src/modules/agent/chatRetry.ts`: chat retry and abort classification.
 - `src/modules/agent/runtimeIds.ts`: runtime ID generation.

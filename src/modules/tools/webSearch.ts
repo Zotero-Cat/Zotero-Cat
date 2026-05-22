@@ -70,7 +70,7 @@ const DEFAULT_PROVIDER: WebSearchProviderID = "duckduckgo";
 const DEFAULT_DUCKDUCKGO_ENDPOINT = "https://api.duckduckgo.com/";
 const DEFAULT_DUCKDUCKGO_HTML_ENDPOINT = "https://html.duckduckgo.com/html/";
 const DEFAULT_SEARXNG_ENDPOINT = "http://127.0.0.1:8888/search";
-const DEFAULT_MAX_RESULTS = 5;
+const DEFAULT_MAX_RESULTS = Number.POSITIVE_INFINITY;
 const SEARCH_TIMEOUT_MS = 15_000;
 const MAX_QUERY_CHARS = 240;
 const MAX_TITLE_CHARS = 120;
@@ -183,13 +183,20 @@ function buildDuckDuckGoHTMLSearchURL(query: string) {
   return url.toString();
 }
 
-function buildSearXNGSearchURL(endpoint: string, query: string) {
+function buildSearXNGSearchURL(
+  endpoint: string,
+  query: string,
+  page: number = 1,
+) {
   const url = new URL(endpoint || DEFAULT_SEARXNG_ENDPOINT);
   if (url.pathname === "/" || !url.pathname) {
     url.pathname = "/search";
   }
   url.searchParams.set("q", query);
   url.searchParams.set("format", "json");
+  if (page > 1) {
+    url.searchParams.set("pageno", String(page));
+  }
   return url.toString();
 }
 
@@ -241,9 +248,40 @@ async function searchSearXNG(
   endpoint: string,
   maxResults: number,
 ) {
+  if (Number.isFinite(maxResults)) {
+    const collected: WebSearchResult[] = [];
+    let page = 1;
+    while (collected.length < maxResults) {
+      const pageResults = await requestSearXNGPage(
+        endpoint,
+        query,
+        page,
+        maxResults,
+      );
+      const before = collected.length;
+      collected.push(...pageResults);
+      const deduped = dedupeResults(collected).slice(0, maxResults);
+      collected.length = 0;
+      collected.push(...deduped);
+      if (!pageResults.length || collected.length === before) {
+        break;
+      }
+      page += 1;
+    }
+    return collected;
+  }
+  return requestSearXNGPage(endpoint, query, 1, maxResults);
+}
+
+async function requestSearXNGPage(
+  endpoint: string,
+  query: string,
+  page: number,
+  maxResults: number,
+) {
   const request = await Zotero.HTTP.request(
     "GET",
-    buildSearXNGSearchURL(endpoint, query),
+    buildSearXNGSearchURL(endpoint, query, page),
     {
       headers: { Accept: "application/json" },
       timeout: SEARCH_TIMEOUT_MS,
@@ -517,7 +555,7 @@ function normalizeMaxResults(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_MAX_RESULTS;
   }
-  return Math.max(1, Math.min(10, Math.floor(value)));
+  return Math.max(1, Math.floor(value));
 }
 
 function normalizeString(value: unknown) {
@@ -531,6 +569,7 @@ export const webSearchTestUtils = {
   buildDuckDuckGoHTMLSearchURL,
   buildDuckDuckGoSearchURL,
   buildSearXNGSearchURL,
+  normalizeMaxResults,
   parseDuckDuckGoHTMLResults,
   parseDuckDuckGoResults,
   parseSearXNGResults,

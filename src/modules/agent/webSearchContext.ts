@@ -24,6 +24,7 @@ export interface WebSearchContextOptions {
   prompt: string;
   item: Zotero.Item | null;
   locale: "en" | "zh";
+  maxResults?: number;
   isCancelled(): boolean;
   onStatus(status: WebSearchRunStatus): Promise<void> | void;
 }
@@ -76,7 +77,11 @@ async function runWebSearchQuery(
     return "";
   }
   try {
-    const response = await searchWeb(query, { provider, endpoint });
+    const response = await searchWeb(query, {
+      provider,
+      endpoint,
+      maxResults: options.maxResults,
+    });
     if (options.isCancelled()) {
       return "";
     }
@@ -167,6 +172,23 @@ export function registerWebSearchToolHandler() {
           type: "string",
           description: "Alias for query.",
         },
+        maxResults: {
+          type: "integer",
+          description:
+            "Maximum number of search results to return. Use the amount needed for the task.",
+        },
+        count: {
+          type: "integer",
+          description: "Alias for maxResults.",
+        },
+        limit: {
+          type: "integer",
+          description: "Alias for maxResults.",
+        },
+        numResults: {
+          type: "integer",
+          description: "Alias for maxResults.",
+        },
       },
       additionalProperties: true,
     },
@@ -183,8 +205,10 @@ export function registerWebSearchToolHandler() {
     async execute(query, options) {
       const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
       const statusCallback = options.onStatus;
+      const maxResults = readMaxResults(options.rawInput);
       return runWebSearchQuery(query, {
         locale,
+        maxResults,
         isCancelled: () => false,
         onStatus: statusCallback || (() => {}),
       });
@@ -195,4 +219,17 @@ export function registerWebSearchToolHandler() {
 
 function asStringField(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function readMaxResults(rawInput: Record<string, unknown> | undefined) {
+  if (!rawInput) {
+    return undefined;
+  }
+  for (const key of ["maxResults", "count", "limit", "numResults"]) {
+    const value = rawInput[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+  return undefined;
 }

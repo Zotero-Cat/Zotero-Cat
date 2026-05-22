@@ -2,9 +2,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  height: 360px;
-  max-height: 360px;
-  min-height: 360px;
+  height: 85vh;
+  max-height: 85vh;
+  min-height: 220px;
   overflow: hidden;
   position: relative;
 }
@@ -76,26 +76,39 @@
 
 .za-agent-activity-status {
   align-items: center;
-  color: color-mix(in srgb, currentColor 68%, transparent);
+  align-self: flex-start;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  border-radius: 999px;
+  color: color-mix(in srgb, currentColor 72%, transparent);
   display: flex;
   gap: 7px;
   min-height: 20px;
-  padding: 0 2px;
+  max-width: 92%;
+  padding: 5px 9px;
 }
 
 .za-agent-activity-indicator {
-  animation: za-agent-pulse 1s ease-in-out infinite;
-  background: #2d7ff9;
+  animation: za-agent-spin 0.85s linear infinite;
+  border: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: #2d7ff9;
   border-radius: 999px;
   flex: none;
-  height: 6px;
-  width: 6px;
+  height: 10px;
+  width: 10px;
 }
 
 .za-agent-activity-label {
   font-size: 12px;
   font-weight: 500;
   min-width: 0;
+}
+
+.za-agent-activity-status[data-tone="error"] {
+  color: #c54545;
+}
+
+.za-agent-activity-status[data-tone="error"] .za-agent-activity-indicator {
+  border-top-color: #c54545;
 }
 
 .za-agent-tool-event {
@@ -184,6 +197,12 @@
   50% {
     opacity: 1;
     transform: scale(1.15);
+  }
+}
+
+@keyframes za-agent-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -330,215 +349,6 @@
   font-size: 12px;
   gap: 4px;
   user-select: none;
-}
-
-.za-agent-custom-context {
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  border-radius: 6px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.za-agent-custom-context-summary {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  line-height: 1.35;
-  padding: 5px 7px;
-  user-select: none;
-}
-
-.za-agent-custom-context-title {
-  color: color-mix(in srgb, currentColor 82%, transparent);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.za-agent-custom-context-status {
-  color: color-mix(in srgb, currentColor 54%, transparent);
-  flex: none;
-  font-size: 11px;
-}
-
-.za-agent-custom-context-input {
-  background: color-mix(in srgb, currentColor 4%, transparent);
-  border: 0;
-  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.35;
-  max-height: 82px;
-  min-height: 44px;
-  min-width: 0;
-  padding: 5px 7px;
-  resize: vertical;
-  user-select: text;
-  -moz-user-select: text;
-}
-
-.za-agent-context-preview {
-  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-  border-radius: 6px;
-  font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.za-agent-context-preview-summary {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  line-height: 1.35;
-  padding: 5px 7px;
-  user-select: none;
-}
-
-.za-agent-context-preview-title {
-  color: color-mix(in srgb, currentColor 82%, transparent);
-  font-weight: 600;
-}
-
-.za-agent-context-budget {
-  color: color-mix(in srgb, currentColor 62%, transparent);
-  font-size: 11px;
-}
-
-.za-agent-context-budgets {
-  align-items: flex-end;
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.za-agent-context-budget[data-kind="warning"] {
-  color: #8a5a00;
-}
-
-.za-agent-context-budget[data-kind="muted"] {
-  color: color-mix(in srgb, currentColor 48%, transparent);
-}
-
-.za-agent-context-preview-body {
-  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 6px 7px 7px;
-}
-
-.za-agent-context-preview-note {
-  color: color-mix(in srgb, currentColor 68%, transparent);
-  line-height: 1.35;
-}
-
-.za-agent-context-preview-note[data-kind="warning"] {
-  color: #8a5a00;
-}
-
-.za-agent-context-preview-text {
-  background: color-mix(in srgb, currentColor 7%, transparent);
-  border-radius: 5px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.35;
-  margin: 0;
-  max-height: 110px;
-  overflow: auto;
-  padding: 6px;
-  user-select: text;
-  -moz-user-select: text;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.za-agent-diagnostics {
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  border-radius: 6px;
-  font-size: 12px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.za-agent-diagnostics-summary {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  line-height: 1.35;
-  padding: 5px 7px;
-  user-select: none;
-}
-
-.za-agent-diagnostics-title {
-  color: color-mix(in srgb, currentColor 82%, transparent);
-  font-weight: 600;
-}
-
-.za-agent-diagnostics-count {
-  color: color-mix(in srgb, currentColor 54%, transparent);
-  flex: none;
-  font-size: 11px;
-}
-
-.za-agent-diagnostics-body {
-  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 150px;
-  overflow: auto;
-  padding: 6px 7px 7px;
-}
-
-.za-agent-diagnostics-empty {
-  color: color-mix(in srgb, currentColor 60%, transparent);
-}
-
-.za-agent-diagnostic-entry {
-  border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
-  padding-left: 6px;
-}
-
-.za-agent-diagnostic-entry[data-level="warning"] {
-  border-left-color: #8a5a00;
-}
-
-.za-agent-diagnostic-entry[data-level="error"] {
-  border-left-color: #8a1c1c;
-}
-
-.za-agent-diagnostic-meta {
-  color: color-mix(in srgb, currentColor 54%, transparent);
-  font-size: 10px;
-}
-
-.za-agent-diagnostic-message {
-  line-height: 1.35;
-  user-select: text;
-  -moz-user-select: text;
-}
-
-.za-agent-diagnostic-detail {
-  background: color-mix(in srgb, currentColor 6%, transparent);
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  line-height: 1.35;
-  margin: 4px 0 0;
-  max-height: 72px;
-  overflow: auto;
-  padding: 5px;
-  user-select: text;
-  -moz-user-select: text;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .za-agent-model-status {
