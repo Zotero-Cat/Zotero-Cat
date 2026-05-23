@@ -460,6 +460,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `ui/sessionOptions.ts` — `limitConversationOptions`, `formatConversationOptionLabel`, `buildConversationExportText`, `copyConversationToClipboard`, `promptRenameConversation`, `showToast`
   - `ui/labels.ts` — `getModelLabel`, `getFetchModelsLabel`, `getReasoningLabel`, `getReasoningOptionLabel`, `getReasoningStatusLabel`, `formatError`, `normalizeAuthKey`, etc.
   - `ui/layout.ts` — `ScrollState`, `isNearBottom`, `scrollToBottom`, `captureScrollState`, `restoreScrollPosition`, `applyRootDimensions`, `ensureBodyResizeObserver`
+  - `ui/messageList.ts` — message bubbles, annotation proposal card mount, activity-status mount, message-list scroll tracking
   - `ui/messageMeta.ts` — `createMessageMeta`, `formatMessageDateTime`, `formatWaitSeconds`, `createCopyButton`, `createContextToggle`
   - `ui/modelControls.ts` — `renderModelOptions`, `renderReasoningOptions`
   - `ui/sectionGates.ts` — provider configuration gate, loading gate, provider-configured check

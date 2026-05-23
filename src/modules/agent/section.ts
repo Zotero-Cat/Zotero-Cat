@@ -26,7 +26,6 @@ import {
   getConversationForKey as getConversationForKeyInRuntime,
   getConversationMessage as getConversationMessageInRuntime,
   getConversationsForScope as getConversationsForScopeInRuntime,
-  pointsToMessage,
   selectConversation as selectConversationInRuntime,
   toProviderMessages,
   touchConversationByKey as touchConversationByKeyInRuntime,
@@ -118,7 +117,6 @@ import {
   gatherFailedAnnotationPageText,
   shouldRepairFailedAnnotationBatch,
 } from "../tools/annotationRepair";
-import { renderProposalBatch } from "./proposalView";
 import {
   createAnnotation,
   deleteAnnotation,
@@ -130,7 +128,6 @@ import {
   isWebSearchEnabledPref,
   type WebSearchRunStatus,
 } from "./webSearchContext";
-import { renderMessageMarkdown } from "./markdown";
 import {
   applyRootDimensions,
   captureScrollState,
@@ -139,11 +136,7 @@ import {
   restoreScrollPosition,
   scrollToBottom,
 } from "./ui/layout";
-import {
-  createContextToggle,
-  createCopyButton,
-  createMessageMeta,
-} from "./ui/messageMeta";
+import { createContextToggle } from "./ui/messageMeta";
 import {
   formatError,
   formatModelFetchError,
@@ -156,7 +149,6 @@ import {
   getReasoningStatusLabel,
   normalizeAuthKey,
 } from "./ui/labels";
-import { renderActivityStatus } from "./ui/activityStatus";
 import { createSessionControls } from "./ui/sessionControls";
 import { renderModelOptions, renderReasoningOptions } from "./ui/modelControls";
 import {
@@ -164,6 +156,7 @@ import {
   renderConversationStoreLoading,
   renderProviderGate,
 } from "./ui/sectionGates";
+import { renderMessageList } from "./ui/messageList";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -253,94 +246,40 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   applyRootDimensions(root, body);
   ensureBodyResizeObserver(body);
 
-  const messages = doc.createElement("div");
-  messages.className = "za-agent-messages";
-  let renderedMessages = 0;
-  for (const [index, message] of conversationMessages.entries()) {
-    if (message.kind === "tool-event" || message.role === "tool") {
-      continue;
-    }
-    if (message.role === "assistant" && !message.content.trim()) {
-      continue;
-    }
-    const bubble = doc.createElement("div");
-    bubble.className = `za-agent-message za-agent-${message.role}`;
-    const isStreamingCurrent = pointsToMessage(
-      runtime.streamingAssistant,
-      conversationKey,
-      index,
-    );
-    if (isStreamingCurrent) {
-      bubble.classList.add("za-agent-streaming");
-    }
-    const content = doc.createElement("div");
-    content.className = "za-agent-message-content";
-    renderMessageMarkdown(content, message.content);
-    bubble.append(
-      content,
-      createMessageMeta(doc, message),
-      createCopyButton(doc, message.content),
-    );
-    messages.appendChild(bubble);
-    renderedMessages += 1;
-  }
-  messages.addEventListener("scroll", () => {
-    if (runtime.sending) {
-      return;
-    }
-    runtime.shouldAutoScroll = isNearBottom(messages);
-  });
-
-  const pendingBatch = getBatchForConversation(conversationKey);
-  if (pendingBatch && pendingBatch.proposals.length) {
-    messages.appendChild(
-      renderProposalBatch(doc, pendingBatch, {
-        onAccept(id) {
-          setProposalStatus(conversationKey, id, "accepted");
-          void maybeApplyResolvedBatch(conversationKey);
-        },
-        onReject(id) {
-          setProposalStatus(conversationKey, id, "rejected");
-          void maybeApplyResolvedBatch(conversationKey);
-        },
-        onAcceptAll() {
-          acceptAllPending(conversationKey);
-          void applyBatchAndContinue(conversationKey, false);
-        },
-        onAlwaysAllow() {
-          const batch = getBatchForConversation(conversationKey);
-          if (batch) {
-            rememberAnnotationOperationApprovals(batch);
-          }
-          acceptAllPending(conversationKey);
-          void applyBatchAndContinue(conversationKey, false);
-        },
-        onRejectAll() {
-          rejectAllPending(conversationKey);
-          void maybeApplyResolvedBatch(conversationKey);
-        },
-        onDismiss() {
-          runtime.pendingToolFollowUp.delete(conversationKey);
-          clearBatch(conversationKey);
-          void refreshAllSections();
-        },
-      }),
-    );
-    renderedMessages += 1;
-  }
-
-  const activityStatus = renderActivityStatus(doc, runtime, conversationKey);
-  if (activityStatus) {
-    messages.appendChild(activityStatus);
-    renderedMessages += 1;
-  }
-
-  if (!renderedMessages) {
-    const empty = doc.createElement("div");
-    empty.className = "za-agent-empty";
-    empty.textContent = getString("agent-empty-state");
-    messages.appendChild(empty);
-  }
+  const messages = renderMessageList(
+    doc,
+    runtime,
+    conversationKey,
+    conversationMessages,
+    {
+      onAcceptProposal(id) {
+        setProposalStatus(conversationKey, id, "accepted");
+        void maybeApplyResolvedBatch(conversationKey);
+      },
+      onRejectProposal(id) {
+        setProposalStatus(conversationKey, id, "rejected");
+        void maybeApplyResolvedBatch(conversationKey);
+      },
+      onAcceptAllProposals() {
+        acceptAllPending(conversationKey);
+        void applyBatchAndContinue(conversationKey, false);
+      },
+      onAlwaysAllowProposals(batch) {
+        rememberAnnotationOperationApprovals(batch);
+        acceptAllPending(conversationKey);
+        void applyBatchAndContinue(conversationKey, false);
+      },
+      onRejectAllProposals() {
+        rejectAllPending(conversationKey);
+        void maybeApplyResolvedBatch(conversationKey);
+      },
+      onDismissProposals() {
+        runtime.pendingToolFollowUp.delete(conversationKey);
+        clearBatch(conversationKey);
+        void refreshAllSections();
+      },
+    },
+  );
 
   const composer = doc.createElement("div");
   composer.className = "za-agent-composer";
