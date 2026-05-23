@@ -7,6 +7,8 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-23
+
 ### Fixed
 
 - Native `tool_calls` round-trips now persist `role: "tool"` messages into

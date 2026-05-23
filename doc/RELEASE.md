@@ -89,10 +89,7 @@ The release workflow lives at `.github/workflows/release.yml`.
   `--prerelease --latest=false` so the public package release remains the
   visible release.
 
-The first alpha (`v0.1.0-alpha`) has already been published as a GitHub
-pre-release. The next public release target is `v0.1.1`, which provides a real
-package-version bump over that alpha. For future releases, repeat the same
-checks:
+Repeat the same checks for each public release:
 
 ```bash
 nvm use
@@ -103,12 +100,11 @@ npm test
 git status --short
 ```
 
-After the relevant gates pass, create and push the release tag. For the current
-release target:
+After the relevant gates pass, create and push the release tag. For example:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 Do not tag a release while the relevant manual Zotero installation,

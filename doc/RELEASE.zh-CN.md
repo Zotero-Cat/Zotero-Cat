@@ -71,7 +71,7 @@ Release workflow 位于 `.github/workflows/release.yml`。
 - 推送 `v*` 标签会运行同样检查，上传 artifact，然后执行 `npm run release` 发布 GitHub Release 并更新 manifest assets。
 - 发布完成后，workflow 会对特殊 `release` tag 执行 `--prerelease --latest=false`，避免内部 manifest release 抢占公开页面上的 Latest。
 
-首个 alpha（`v0.1.0-alpha`）已经作为 GitHub pre-release 发布。下一个公开发布目标是 `v0.1.1`，用于在该 alpha 基础上提供真实包版本升级。后续 release 复用同一套检查：
+每次公开 release 复用同一套检查：
 
 ```bash
 nvm use
@@ -82,11 +82,11 @@ npm test
 git status --short
 ```
 
-相关门禁通过后，创建并推送 release 标签。当前发布目标为：
+相关门禁通过后，创建并推送 release 标签。例如：
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 当前 release 相关的人工 Zotero 安装、持久化或兼容性检查未完成时，不要创建 release tag。

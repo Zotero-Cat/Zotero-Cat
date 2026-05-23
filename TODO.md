@@ -17,9 +17,10 @@ workflow.
 - License: `AGPL-3.0-or-later`
 - Runtime for development: Node.js 24 LTS
 - Current implementation target: Zotero 9
-- Released: `v0.2.0` (item-pane chat, OpenAI-compatible provider, Zotero
+- Released: `v0.3.0` (item-pane chat, OpenAI-compatible provider, Zotero
   context, streaming, history, optional web search, and experimental PDF tool
-  agency behind the `PDF tools` toggle)
+  agency behind the `PDF tools` toggle, with hardened tool-call orchestration
+  and PDF text matching)
 
 ## Phase 0: Repository Initialization
 
@@ -134,9 +135,10 @@ Goal: let the assistant read a PDF, propose highlights, notes, and edits to
 existing annotations, and apply them only after per-item user confirmation
 (Accept / Reject / Accept All / Reject All).
 
-Status: the first end-to-end implementation is released in `v0.2.0` behind the
-`PDF tools` toggle. It remains experimental and needs continued Zotero UI
-validation on real PDFs.
+Status: the first end-to-end implementation was released in `v0.2.0` behind the
+`PDF tools` toggle. `v0.3.0` hardens the tool pipeline and PDF text matching.
+PDF tools remain experimental and need continued Zotero UI validation on real
+PDFs.
 
 ### Onboarding gate
 
@@ -217,7 +219,7 @@ validation on real PDFs.
 - [x] Add `test/proposal-state.test.ts` — state machine edge cases.
 - [x] Update `doc/UI_REGRESSION_CHECKLIST.md` with create/modify/delete
       annotation cases and the onboarding gate.
-- [ ] `npm run lint:check && npm run build && npm test` all green.
+- [x] `npm run lint:check && npm run build && npm test` all green.
 
 ## Phase 7: Function Calling Standardization
 
@@ -285,11 +287,11 @@ Constraints (do not violate):
       Quirk-recovery retry is delegated; section.ts only logs the diagnostic
       and resets the in-flight bubble through `onDiagnostic`.
       `continueAfterAssistantToolAction` and `continueAfterNativeToolCalls`
-      stay in `section.ts` for now because they orchestrate UI state and the
-      proposal-batch confirmation gate.
-- [ ] After migration, `section.ts` should drop below ~2,500 lines and stop
-      importing provider quirks state directly. Currently still ~3,900 lines:
-      tool follow-up orchestration is still inline. Address as a follow-up.
+      were later moved to `runtime/toolChain.ts`, leaving `section.ts` focused
+      on UI/runtime wiring.
+- [x] After migration, `section.ts` should drop below ~2,500 lines and stop
+      importing provider quirks state directly. Current `section.ts` is ~935
+      lines.
 
 ### Companion bug fixes (do alongside migration)
 

@@ -5,9 +5,9 @@
 ## Quick Start
 
 Download the current release from
-[GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.2.0),
+[GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.3.0),
 or download
-[`zotero-cat-v0.2.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.2.0/zotero-cat-v0.2.0.xpi)
+[`zotero-cat-v0.3.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.3.0/zotero-cat-v0.3.0.xpi)
 directly. In Zotero, install it from `Tools -> Plugins`.
 
 Zotero-Cat is a Zotero item-pane assistant for reading, summarizing, reviewing, and discussing research items with user-selected model providers. It follows the interaction style of Codex in VS Code, but keeps the provider configurable so users can use OpenAI-compatible gateways, local services, or self-hosted model endpoints.
@@ -18,9 +18,9 @@ Zotero-Cat is an independent open-source project and is not affiliated with Zote
 
 ## Current Status
 
-The current release is `v0.2.0`. It adds experimental PDF tool agency behind
-the `PDF tools` toggle while keeping automated checks passing for the current
-Zotero 9 target.
+The current release is `v0.3.0`. It hardens tool-call orchestration, PDF text
+matching, native `tool_calls` history, and the long-running tool activity UI
+while keeping automated checks passing for the current Zotero 9 target.
 
 The plugin currently runs as a Zotero item-pane section through `ItemPaneManager.registerSection`. It does not replace Zotero's native right sidebar.
 
@@ -235,7 +235,7 @@ Zotero 10 beta compatibility is not declared until the manual checklist passes o
 
 See [TODO.md](./TODO.md) for the detailed phase plan. A Chinese version is available at [TODO.zh-CN.md](./TODO.zh-CN.md).
 
-Post-0.2.0 hardening:
+Post-0.3.0 hardening:
 
 - Continue validating PDF tools on real Zotero 9 libraries.
 - Verify the latest Zotero beta if available.

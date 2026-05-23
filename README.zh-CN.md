@@ -4,9 +4,9 @@
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.2.0)
+从 [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.3.0)
 下载当前正式版本，或直接下载
-[`zotero-cat-v0.2.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.2.0/zotero-cat-v0.2.0.xpi)。在
+[`zotero-cat-v0.3.0.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.3.0/zotero-cat-v0.3.0.xpi)。在
 Zotero 中通过 `Tools -> Plugins` 安装。
 
 Zotero-Cat 是一个 Zotero 条目面板助手，用于阅读、总结、审阅和讨论文献条目。它的交互风格参考 Codex in VS Code，但模型提供方由用户配置，可接入 OpenAI-compatible 网关、本地服务或自托管模型端点。
@@ -17,7 +17,7 @@ Zotero-Cat 是独立开源项目，不隶属于 Zotero，也不由 Zotero 或 Di
 
 ## 当前状态
 
-当前版本是 `v0.2.0`。它加入由 `PDF 工具` 开关控制的实验性 PDF 工具代理；当前 Zotero 9 目标下，自动化检查已通过。
+当前版本是 `v0.3.0`。它强化了工具调用编排、PDF 文本匹配、原生 `tool_calls` 历史和长时间工具运行状态显示；当前 Zotero 9 目标下，自动化检查已通过。
 
 插件当前通过 `ItemPaneManager.registerSection` 作为 Zotero 条目面板里的一个 section 运行，不替换 Zotero 原生右侧栏。
 
@@ -228,7 +228,7 @@ Zotero 10 beta 兼容性需要等当前 beta 线的人工清单通过后再声�
 
 详细阶段计划见 [TODO.zh-CN.md](./TODO.zh-CN.md)。英文版见 [TODO.md](./TODO.md)。
 
-`0.2.0` 后续加固：
+`0.3.0` 后续加固：
 
 - 继续在真实 Zotero 9 library 上验证 PDF 工具。
 - 如果可用，验证最新 Zotero beta。

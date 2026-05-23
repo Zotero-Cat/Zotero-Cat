@@ -16,9 +16,9 @@
 - License：`AGPL-3.0-or-later`
 - 开发运行时：Node.js 24 LTS
 - 当前实现目标：Zotero 9
-- 已发布版本：`v0.2.0`(item-pane 聊天、OpenAI-compatible provider、Zotero
+- 已发布版本：`v0.3.0`(item-pane 聊天、OpenAI-compatible provider、Zotero
   上下文、流式输出、历史会话、可选联网搜索，以及由 `PDF 工具` 开关控制的实验性
-  PDF 工具代理)
+  PDF 工具代理，并强化了工具调用编排和 PDF 文本匹配)
 
 ## Phase 0: 仓库初始化
 
@@ -121,7 +121,7 @@
 目标:助手能读 PDF、自己提议高亮、批注以及对已有标注的修改/删除,所有写操作
 在用户逐条确认(Accept / Reject / Accept All / Reject All)之后才落盘。
 
-状态：第一版端到端实现已随 `v0.2.0` 发布，并由 `PDF 工具` 开关控制。该功能仍为实验性能力，需要继续在真实 PDF 上做 Zotero UI 验证。
+状态：第一版端到端实现已随 `v0.2.0` 发布，并由 `PDF 工具` 开关控制。`v0.3.0` 强化了工具管道和 PDF 文本匹配。该功能仍为实验性能力，需要继续在真实 PDF 上做 Zotero UI 验证。
 
 ### 首次使用引导
 
@@ -194,7 +194,7 @@
 - [x] 新增 `test/proposal-state.test.ts`:状态机边界。
 - [x] 更新 `doc/UI_REGRESSION_CHECKLIST.md`:新增创建/修改/删除标注用例
       与引导页。
-- [ ] `npm run lint:check && npm run build && npm test` 全绿。
+- [x] `npm run lint:check && npm run build && npm test` 全绿。
 
 ## Phase 7: Function Calling 规范化
 
@@ -257,10 +257,11 @@
       记一条 warning 并复位流式状态。
       `continueAfterAssistantToolAction` / `continueAfterNativeToolCalls`
       继续留在 `section.ts`，因为它们要协调 UI 状态和写操作的人工
-      确认。
-- [ ] 迁移完成后 `section.ts` 应回落到 ~2500 行以下，并且不再直接持有
-      provider quirks 状态。当前仍在 ~3,900 行：tool follow-up 协调还
-      内联在 section.ts。作为后续拆分项再处理。
+      确认。`continueAfterAssistantToolAction` /
+      `continueAfterNativeToolCalls` 后续已迁入 `runtime/toolChain.ts`，
+      `section.ts` 现在只保留 UI/runtime 接线。
+- [x] 迁移完成后 `section.ts` 应回落到 ~2500 行以下，并且不再直接持有
+      provider quirks 状态。当前 `section.ts` 约 935 行。
 
 ### 配套 bug 修复（与迁移一起做）
 

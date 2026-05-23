@@ -1,7 +1,7 @@
 {
   "name": "zotero-cat",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "An item-pane Cat agent plugin for Zotero with pluggable model providers.",
   "config": {
     "addonName": "Zotero-Cat",
@@ -12,13 +12,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/qianjindexiaozu/Zotero-Cat.git"
+    "url": "git+https://github.com/Zotero-Cat/Zotero-Cat.git"
   },
   "author": "qianjindexiaozu",
   "bugs": {
-    "url": "https://github.com/qianjindexiaozu/Zotero-Cat/issues"
+    "url": "https://github.com/Zotero-Cat/Zotero-Cat/issues"
   },
-  "homepage": "https://github.com/qianjindexiaozu/Zotero-Cat#readme",
+  "homepage": "https://github.com/Zotero-Cat/Zotero-Cat#readme",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=24 <25"
