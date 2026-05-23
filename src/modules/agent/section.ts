@@ -13,7 +13,6 @@ import {
 } from "./functionCalling/quirks";
 import { runAssistantTurn } from "./functionCalling/runner";
 import { shouldRetryChatError, isAbortError } from "./chatRetry";
-import { touchConversation } from "./conversationStore";
 import {
   clearConversationMessages as clearConversationMessagesInRuntime,
   createNewConversationForScope,
@@ -23,7 +22,6 @@ import {
   getConversationMessage as getConversationMessageInRuntime,
   getConversationsForScope as getConversationsForScopeInRuntime,
   selectConversation as selectConversationInRuntime,
-  toProviderMessages,
   touchConversationByKey as touchConversationByKeyInRuntime,
 } from "./conversationRuntime";
 import {
@@ -43,6 +41,7 @@ import {
   startWorkingState as startWorkingStateInRuntime,
   stopWaitingAnimation as stopWaitingAnimationInRuntime,
 } from "./runtime/requestState";
+import { beginUserTurn } from "./runtime/userTurn";
 import {
   ensureConversationStoreLoaded as ensureConversationStoreLoadedInRuntime,
   flushConversationStore as flushConversationStoreInRuntime,
@@ -401,22 +400,12 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     {
       onStop: requestCancel,
       onSubmit(prompt) {
-        runtime.sending = true;
-        startWorkingState(conversationKey);
-        runtime.cancelRequested = false;
-        runtime.cancelActiveRequest = null;
-        runtime.requestToken += 1;
-        runtime.webSearchStatusMessage = "";
-        runtime.webSearchStatusKind = "";
-        runtime.latestToolEventByKey.delete(conversationKey);
-        const requestToken = runtime.requestToken;
-        conversation.messages.push({
-          role: "user",
-          content: prompt,
-          createdAt: Date.now(),
-        });
-        touchConversation(conversation);
-        const requestMessages = toProviderMessages(conversation.messages);
+        const turn = beginUserTurn(
+          runtime,
+          conversation,
+          conversationKey,
+          prompt,
+        );
         const templateID = runtime.templateID;
         const contextOptions = getAutomaticContextOptions();
         const modelContextWindow = resolveModelContextWindow(
@@ -428,21 +417,11 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
           resolveReasoningOptions(providerID, baseURL, currentModel),
           normalizeReasoningEffort(getPref("openaiReasoningEffort")),
         );
-        const assistantMessageIndex =
-          conversation.messages.push({
-            role: "assistant",
-            content: "",
-            createdAt: Date.now(),
-          }) - 1;
-        touchConversation(conversation);
         saveConversationStore();
-        runtime.shouldAutoScroll = true;
-        runtime.streamingAssistant = null;
-        startWaitingAnimation(conversationKey, assistantMessageIndex);
         void refreshAllSections();
         void sendPreparedMessage(
           {
-            requestMessages,
+            requestMessages: turn.requestMessages,
             item,
             contextOptions,
             templateID,
@@ -451,22 +430,22 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
             prompt,
           },
           conversationKey,
-          assistantMessageIndex,
-          requestToken,
+          turn.assistantMessageIndex,
+          turn.requestToken,
           requestReasoningEffort,
         )
           .catch(async (error) => {
-            if (requestToken !== runtime.requestToken) {
+            if (turn.requestToken !== runtime.requestToken) {
               return;
             }
             await handleChatFailure(
               error,
               conversationKey,
-              assistantMessageIndex,
+              turn.assistantMessageIndex,
             );
           })
           .finally(() => {
-            finishActiveRequest(conversationKey, requestToken);
+            finishActiveRequest(conversationKey, turn.requestToken);
           });
       },
     },
