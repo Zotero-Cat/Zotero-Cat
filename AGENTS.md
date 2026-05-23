@@ -473,8 +473,10 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `tools/annotationProposals.ts` — annotation proposal state machine
   - `tools/annotationRepair.ts` — failed-only annotation batch repair prompt/context helpers
 
+- **PDF text matching hardening**: Added regression coverage for hyphenated word line-break artifacts across spans and inside a single span. Matching now normalizes Unicode hyphen variants before line-break rejoin so PDF text such as `set‑` + `tings` can match model text `settings`.
+
 - All extraction uses explicit dependency injection (handler/deps interfaces), no runtime singleton coupling.
-- Lint, build, and all 158 tests pass.
+- Lint, build, and all 161 tests pass.
 
 ### Pending Tasks
 
@@ -511,21 +513,12 @@ Extract into `agent/ui/sectionBody.ts`:
 
 Estimated size: ~500–600 lines to extract.
 
-#### Task #9 — Fix PDF cross-span hyphenated word matching bug
-
-**Root cause**: When the model proposes a highlight with text like "...attack settings, with..." but the PDF has a line-break hyphen in "set-\ntings", the verbatim match fails. The existing `normalizeForMatching` regex `(\w)-\s+(\w)` in `pdfReader.ts:871` should handle this, and `buildNormalizedIndex` at line 790 has the same regex for cross-span rejoin. Investigation needed:
-
-1. Add a test case in `test/pdf-tools-logic.test.ts` with an ASCII hyphen mid-word spanning two text spans to reproduce
-2. Debug why the existing regex doesn't catch "set-\ntings" — possibly the hyphen + newline is within a single text span (not across spans), or the `\s+` pattern doesn't match the specific whitespace character
-3. Fix: extend `normalizeForMatching` to also handle `(\w)-\n(\w)` within a single span, or broaden the cross-span join logic
-4. The memory file `glm-4-5-air-verbatim-drift.md` documents other known failure modes for glm-4.5-air
-
 ### Current State
 
 - Branch: `main`, worktree may be dirty (pending extraction commits)
 - Lint: clean
 - Build: passes
-- Tests: 158 pass, 0 fail
+- Tests: 161 pass, 0 fail
 - `section.ts`: ~2806 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 

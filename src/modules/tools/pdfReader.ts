@@ -889,7 +889,7 @@ function normalizeForMatching(text: string): string {
   normalized = normalized
     .replace(/[‘’ʼ‛]/g, "'")
     .replace(/[“”„‟]/g, '"')
-    .replace(/[–—−]/g, "-")
+    .replace(/[‐‑‒–—−]/g, "-")
     .replace(/…/g, "...");
   // Rejoin words split across a PDF line break: pdf.js emits "syn-" and
   // "chronous" as two text items, which we glue with a space → "syn- chronous".

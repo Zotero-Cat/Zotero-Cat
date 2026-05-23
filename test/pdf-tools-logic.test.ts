@@ -248,6 +248,51 @@ describe("pdf tools logic", function () {
       assert.equal(match?.pageIndex, 0);
     });
 
+    it("rejoins hyphenated words split inside a single PDF span", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "normal and attack set-\ntings, with an average decrease",
+          x: 0,
+          y: 0,
+          width: 360,
+          height: 20,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "normal and attack settings, with an average decrease",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+    });
+
+    it("normalizes Unicode hyphen line-break artifacts", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "normal and attack set‑",
+          x: 0,
+          y: 0,
+          width: 180,
+          height: 10,
+        },
+        {
+          text: "tings, with an average decrease",
+          x: 180,
+          y: 0,
+          width: 220,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "normal and attack settings, with an average decrease",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+    });
+
     it("preserves inline compound hyphens", function () {
       // No whitespace after the hyphen → "anti-pattern" stays as-is.
       const page = makePage(0, 800, [
