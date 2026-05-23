@@ -462,6 +462,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `ui/layout.ts` — `ScrollState`, `isNearBottom`, `scrollToBottom`, `captureScrollState`, `restoreScrollPosition`, `applyRootDimensions`, `ensureBodyResizeObserver`
   - `ui/messageMeta.ts` — `createMessageMeta`, `formatMessageDateTime`, `formatWaitSeconds`, `createCopyButton`, `createContextToggle`
   - `ui/modelControls.ts` — `renderModelOptions`, `renderReasoningOptions`
+  - `ui/sectionGates.ts` — provider configuration gate, loading gate, provider-configured check
 
 - **`provider.ts`**: 1356 → ~803 lines. Extracted 3 modules:
   - `provider/streaming.ts` — `StreamCollector`, `ResponseIdleWatchdog`, `createStreamCollector`, `createResponseIdleWatchdog`, SSE parsing, `extractStreamDelta`, `extractReasoningDelta`
@@ -500,14 +501,11 @@ Extract the large orchestration functions into a dedicated module. These are the
 
 Estimated size: ~1000–1200 lines to extract.
 
-#### Task #6 — Extract `renderSectionBody` and gate functions
+#### Task #6 — Extract `renderSectionBody`
 
 Extract into `agent/ui/sectionBody.ts`:
 
 - `renderSectionBody(doc, root, runtime, ...)` — ~470 lines of DOM coordination
-- `isProviderConfigured()` — checks API key + base URL
-- `renderProviderGate(doc, root, ...)` — onboarding/no-config placeholder
-- `renderConversationStoreLoading(doc, root, ...)` — loading state
 
 **Challenge**: `renderSectionBody` orchestrates the full DOM tree and wires all event handlers. It currently closes over many `section.ts` locals. The extraction must pass a render-context object with all required callbacks.
 

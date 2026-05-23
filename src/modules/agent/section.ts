@@ -159,6 +159,11 @@ import {
 import { renderActivityStatus } from "./ui/activityStatus";
 import { createSessionControls } from "./ui/sessionControls";
 import { renderModelOptions, renderReasoningOptions } from "./ui/modelControls";
+import {
+  isProviderConfigured,
+  renderConversationStoreLoading,
+  renderProviderGate,
+} from "./ui/sectionGates";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -210,68 +215,18 @@ export function unregisterAgentSection() {
   runtime.refreshers.clear();
 }
 
-function isProviderConfigured(): boolean {
-  const providerID = normalizeProviderID(getPref("provider"));
-  if (!isApiKeyRequiredForProvider(providerID)) {
-    return true;
-  }
-  const baseURL = normalizeString(getPref("openaiBaseUrl"), "");
-  const normalizedBaseURL = normalizeBaseURL(baseURL);
-  if (!normalizedBaseURL) {
-    return false;
-  }
-  return Boolean(getProviderApiKey(providerID, normalizedBaseURL));
-}
-
-function renderProviderGate(body: HTMLDivElement, doc: Document) {
-  const root = doc.createElement("div");
-  root.className = "za-agent-root za-agent-gate";
-  applyRootDimensions(root, body);
-  ensureBodyResizeObserver(body);
-
-  const title = doc.createElement("div");
-  title.className = "za-agent-gate-title";
-  title.textContent = getString("agent-gate-title");
-
-  const message = doc.createElement("div");
-  message.className = "za-agent-gate-message";
-  message.textContent = getString("agent-gate-message");
-
-  const button = doc.createElement("button");
-  button.className = "za-agent-gate-button";
-  button.textContent = getString("agent-gate-open-settings");
-  button.addEventListener("click", () => {
-    try {
-      openAgentPreferences();
-    } catch (error) {
-      recordDiagnostic("error", formatError(error));
-    }
-  });
-
-  root.append(title, message, button);
-  body.replaceChildren(root);
-}
-
-function renderConversationStoreLoading(body: HTMLDivElement, doc: Document) {
-  const root = doc.createElement("div");
-  root.className = "za-agent-root";
-  applyRootDimensions(root, body);
-  ensureBodyResizeObserver(body);
-
-  const loading = doc.createElement("div");
-  loading.className = "za-agent-empty";
-  loading.textContent = getString("agent-waiting-label");
-  root.appendChild(loading);
-  body.replaceChildren(root);
-}
-
 function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   const doc = body.ownerDocument;
   if (!doc) {
     return;
   }
   if (!isProviderConfigured()) {
-    renderProviderGate(body, doc);
+    renderProviderGate(body, doc, {
+      openPreferences: openAgentPreferences,
+      onOpenPreferencesError: (error) => {
+        recordDiagnostic("error", formatError(error));
+      },
+    });
     return;
   }
   if (!runtime.conversationStoreLoaded) {
