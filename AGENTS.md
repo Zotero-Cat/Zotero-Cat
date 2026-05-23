@@ -448,7 +448,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~987 lines. Extracted 27 modules:
+- **`section.ts`**: 3710 → ~935 lines. Extracted 28 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
   - `runtime/annotationApprovals.ts` — scoped annotation approval keys, conversation/attachment-scoped always-allow memory, auto-apply decision
   - `runtime/annotationFollowUp.ts` — post-annotation batch follow-up message construction for text-mode and native tool-call turns
@@ -475,6 +475,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `ui/sectionGates.ts` — provider configuration gate, loading gate, provider-configured check
   - `modelListFetch.ts` — model-list HTTP probing, API-key header preparation, `/models` retry and parse handling
   - `modelMetadataRuntime.ts` — runtime model metadata cache helpers, context-window lookup, reasoning-option/status resolution
+  - `functionCalling/config.ts` — tool-call mode, active base URL, endpoint key, native tool-call eligibility, native tool spec builder
 
 - **`provider.ts`**: 1356 → ~803 lines. Extracted 3 modules:
   - `provider/streaming.ts` — `StreamCollector`, `ResponseIdleWatchdog`, `createStreamCollector`, `createResponseIdleWatchdog`, SSE parsing, `extractStreamDelta`, `extractReasoningDelta`
@@ -502,7 +503,7 @@ No remaining refactoring tasks from the current phase.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~987 lines (down from 3710)
+- `section.ts`: ~935 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents
