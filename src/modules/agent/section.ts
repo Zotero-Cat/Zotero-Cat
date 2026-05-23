@@ -6,11 +6,7 @@ import {
   getDefaultContextOptions,
 } from "./context";
 import type { AgentMessage, AssistantToolCall } from "./types";
-import {
-  ChatResult,
-  createProviderFromPrefs,
-  isApiKeyRequiredForProvider,
-} from "./provider";
+import { ChatResult, createProviderFromPrefs } from "./provider";
 import {
   buildEndpointKey,
   isNativeToolsUnsupported,
@@ -63,14 +59,10 @@ import {
 import { resolveConversationScopeKey } from "./itemScope";
 import {
   ReasoningEffortValue,
-  buildModelEndpointCandidates,
-  canRetryModelEndpoint,
   getDefaultModelForProvider,
-  normalizeBaseURL,
   normalizeProviderID,
   normalizeReasoningEffort,
   normalizeString,
-  parseModelInfos,
   resolveModelOptions,
   summarizeModelMetadataAvailability,
 } from "./modelMetadata";
@@ -81,7 +73,10 @@ import {
   resolveRuntimeReasoningOptions,
   syncReasoningEffortPref,
 } from "./modelMetadataRuntime";
-import { getProviderApiKey } from "./secureApiKey";
+import {
+  fetchModelsFromCurrentProvider,
+  formatModelFetchError,
+} from "./modelListFetch";
 import { openAgentPreferences } from "../prefsPane";
 import {
   buildToolActionFromNativeCall,
@@ -140,11 +135,8 @@ import {
 } from "./ui/layout";
 import {
   formatError,
-  formatModelFetchError,
-  getModelParseMessages,
   getModelsFetchedMessage,
   getReasoningStatusLabel,
-  normalizeAuthKey,
 } from "./ui/labels";
 import { createSessionControls } from "./ui/sessionControls";
 import {
@@ -159,7 +151,6 @@ import { createAgentComposer } from "./ui/composer";
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
 const TYPEWRITER_DELAY_MS = 18;
-const MODEL_FETCH_TIMEOUT_MS = 25_000;
 const CHAT_MAX_ATTEMPTS = 2;
 const CHAT_RETRY_DELAY_MS = 700;
 
@@ -2292,67 +2283,6 @@ function getReasoningStatusText(
   return getReasoningStatusLabel(
     getReasoningMetadataState(runtime, providerID, baseURL, model),
   );
-}
-
-async function fetchModelsFromCurrentProvider(
-  providerID: string,
-  baseURL: string,
-) {
-  const normalizedBaseURL = normalizeBaseURL(baseURL);
-  if (!normalizedBaseURL) {
-    throw new Error(
-      Zotero.locale.startsWith("zh")
-        ? "请先在设置中填写 Base URL。"
-        : "Please set Base URL first in settings.",
-    );
-  }
-  const apiKey = normalizeAuthKey(
-    getProviderApiKey(providerID, normalizedBaseURL),
-  );
-  if (isApiKeyRequiredForProvider(providerID) && !apiKey) {
-    throw new Error(
-      Zotero.locale.startsWith("zh")
-        ? "当前 Provider 需要 API Key。"
-        : "This provider requires an API key.",
-    );
-  }
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-  };
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-  const candidates = buildModelEndpointCandidates(normalizedBaseURL);
-  let lastError: Error | null = null;
-  for (const [index, endpoint] of candidates.entries()) {
-    try {
-      const request = await Zotero.HTTP.request("GET", endpoint, {
-        headers,
-        timeout: MODEL_FETCH_TIMEOUT_MS,
-      });
-      const modelInfos = parseModelInfos(
-        request.responseText || "",
-        getModelParseMessages(),
-      );
-      if (modelInfos.length) {
-        return modelInfos;
-      }
-      throw new Error(
-        Zotero.locale.startsWith("zh")
-          ? "站点返回了空模型列表。"
-          : "Site returned an empty model list.",
-      );
-    } catch (error) {
-      const normalizedError =
-        error instanceof Error ? error : new Error(String(error));
-      if (canRetryModelEndpoint(index, candidates.length, normalizedError)) {
-        lastError = normalizedError;
-        continue;
-      }
-      throw normalizedError;
-    }
-  }
-  throw lastError || new Error(formatModelFetchError(""));
 }
 
 async function refreshAllSections() {
