@@ -78,7 +78,6 @@ import {
   resolveModelOptions,
   summarizeModelMetadataAvailability,
 } from "./modelMetadata";
-import { getPromptTemplateByID, getPromptTemplates } from "./promptTemplates";
 import { getProviderApiKey } from "./secureApiKey";
 import { openAgentPreferences } from "../prefsPane";
 import {
@@ -136,27 +135,22 @@ import {
   restoreScrollPosition,
   scrollToBottom,
 } from "./ui/layout";
-import { createContextToggle } from "./ui/messageMeta";
 import {
   formatError,
   formatModelFetchError,
-  getFetchModelsLabel,
-  getFetchingModelsLabel,
-  getModelLabel,
   getModelParseMessages,
   getModelsFetchedMessage,
-  getReasoningLabel,
   getReasoningStatusLabel,
   normalizeAuthKey,
 } from "./ui/labels";
 import { createSessionControls } from "./ui/sessionControls";
-import { renderModelOptions, renderReasoningOptions } from "./ui/modelControls";
 import {
   isProviderConfigured,
   renderConversationStoreLoading,
   renderProviderGate,
 } from "./ui/sectionGates";
 import { renderMessageList } from "./ui/messageList";
+import { createAgentControlPanel } from "./ui/controlPanel";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -284,9 +278,6 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   const composer = doc.createElement("div");
   composer.className = "za-agent-composer";
 
-  const controls = doc.createElement("div");
-  controls.className = "za-agent-controls";
-
   const providerID = normalizeProviderID(getPref("provider"));
   const baseURL = normalizeString(getPref("openaiBaseUrl"), "");
   const currentModel = normalizeString(
@@ -312,184 +303,108 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     runtime.modelOptionsBySource,
   );
 
-  const modelRow = doc.createElement("div");
-  modelRow.className = "za-agent-model-row";
-
-  const modelLabel = doc.createElement("span");
-  modelLabel.className = "za-agent-template-label";
-  modelLabel.textContent = `${getModelLabel()}:`;
-
-  const modelSelect = doc.createElement("select");
-  modelSelect.className = "za-agent-model-select";
-  modelSelect.disabled = runtime.sending || runtime.modelFetchBusy;
-  renderModelOptions(modelSelect, modelOptions);
-  modelSelect.value = currentModel;
-  modelSelect.addEventListener("change", () => {
-    const nextModel = normalizeString(modelSelect.value, currentModel);
-    setPref("openaiModel", nextModel);
-    syncReasoningEffortPref(
-      resolveReasoningOptions(providerID, baseURL, nextModel),
-      normalizeReasoningEffort(getPref("openaiReasoningEffort")),
-    );
-    void refreshAllSections();
-  });
-
-  const fetchModelsButton = doc.createElement("button");
-  fetchModelsButton.className = "za-agent-model-fetch";
-  fetchModelsButton.disabled = runtime.sending || runtime.modelFetchBusy;
-  fetchModelsButton.textContent = runtime.modelFetchBusy
-    ? getFetchingModelsLabel()
-    : getFetchModelsLabel();
-  fetchModelsButton.addEventListener("click", () => {
-    if (runtime.sending || runtime.modelFetchBusy) {
-      return;
-    }
-    runtime.modelFetchBusy = true;
-    runtime.modelFetchStatusMessage = "";
-    runtime.modelFetchStatusKind = "";
-    void refreshAllSections();
-    void fetchModelsFromCurrentProvider(providerID, baseURL)
-      .then((modelInfos) => {
-        const models = modelInfos.map((modelInfo) => modelInfo.id);
-        runtime.modelOptionsBySource.set(
-          buildModelSourceKey(providerID, baseURL),
-          models,
-        );
-        runtime.modelContextBySource.set(
-          buildModelSourceKey(providerID, baseURL),
-          buildModelContextMap(modelInfos),
-        );
-        runtime.modelReasoningBySource.set(
-          buildModelSourceKey(providerID, baseURL),
-          buildModelReasoningMap(modelInfos),
-        );
-        const nextModel = models.includes(currentModel)
-          ? currentModel
-          : models[0] || currentModel;
+  const controls = createAgentControlPanel(
+    doc,
+    {
+      currentModel,
+      effectiveReasoningEffort,
+      modelFetchBusy: runtime.modelFetchBusy,
+      modelFetchStatusKind: runtime.modelFetchStatusKind,
+      modelFetchStatusMessage: runtime.modelFetchStatusMessage,
+      modelOptions,
+      pdfToolsAutoApply: isPdfToolsAutoApplyPref(),
+      pdfToolsEnabled: isPdfToolsEnabledPref(),
+      reasoningOptions,
+      reasoningStatusText: getReasoningStatusText(
+        providerID,
+        baseURL,
+        currentModel,
+      ),
+      sending: runtime.sending,
+      templateID: runtime.templateID,
+      webSearchEnabled: isWebSearchEnabled(),
+    },
+    {
+      onModelChange(model) {
+        const nextModel = normalizeString(model, currentModel);
         setPref("openaiModel", nextModel);
         syncReasoningEffortPref(
           resolveReasoningOptions(providerID, baseURL, nextModel),
           normalizeReasoningEffort(getPref("openaiReasoningEffort")),
         );
-        runtime.modelFetchStatusKind = "success";
-        runtime.modelFetchStatusMessage = getModelsFetchedMessage(
-          summarizeModelMetadataAvailability(modelInfos),
-        );
-      })
-      .catch((error) => {
-        const message = formatModelFetchError(error);
-        runtime.modelFetchStatusKind = "error";
-        runtime.modelFetchStatusMessage = message;
-        recordDiagnostic("error", message);
-      })
-      .finally(() => {
-        runtime.modelFetchBusy = false;
         void refreshAllSections();
-      });
-  });
-
-  const reasoningLabel = doc.createElement("span");
-  reasoningLabel.className = "za-agent-template-label";
-  reasoningLabel.textContent = `${getReasoningLabel()}:`;
-
-  const reasoningSelect = doc.createElement("select");
-  reasoningSelect.className = "za-agent-reasoning-select";
-  reasoningSelect.disabled = runtime.sending || runtime.modelFetchBusy;
-  renderReasoningOptions(reasoningSelect, reasoningOptions);
-  reasoningSelect.value = effectiveReasoningEffort;
-  reasoningSelect.addEventListener("change", () => {
-    setPref(
-      "openaiReasoningEffort",
-      normalizeReasoningEffort(reasoningSelect.value),
-    );
-    void refreshAllSections();
-  });
-
-  const reasoningStatus = doc.createElement("span");
-  reasoningStatus.className = "za-agent-reasoning-status";
-  reasoningStatus.textContent = getReasoningStatusText(
-    providerID,
-    baseURL,
-    currentModel,
-  );
-
-  modelRow.append(modelLabel, modelSelect, fetchModelsButton);
-
-  const templateRow = doc.createElement("div");
-  templateRow.className = "za-agent-template-row";
-
-  const templateLabel = doc.createElement("span");
-  templateLabel.className = "za-agent-template-label";
-  templateLabel.textContent = `${getString("agent-template-label")}:`;
-
-  const templateSelect = doc.createElement("select");
-  templateSelect.className = "za-agent-template-select";
-  templateSelect.disabled = runtime.sending;
-  for (const template of getPromptTemplates()) {
-    const option = doc.createElement("option");
-    option.value = template.id;
-    option.textContent = template.label;
-    templateSelect.appendChild(option);
-  }
-  templateSelect.value = getPromptTemplateByID(runtime.templateID).id;
-  templateSelect.addEventListener("change", () => {
-    runtime.templateID = getPromptTemplateByID(templateSelect.value).id;
-    void refreshAllSections();
-  });
-  templateRow.append(
-    templateLabel,
-    templateSelect,
-    reasoningLabel,
-    reasoningSelect,
-    reasoningStatus,
-  );
-
-  const contextRow = doc.createElement("div");
-  contextRow.className = "za-agent-context-row";
-  contextRow.append(
-    createContextToggle(
-      doc,
-      "agent-web-search-toggle",
-      isWebSearchEnabled(),
-      runtime.sending,
-      (nextValue) => {
+      },
+      onFetchModels() {
+        if (runtime.sending || runtime.modelFetchBusy) {
+          return;
+        }
+        runtime.modelFetchBusy = true;
+        runtime.modelFetchStatusMessage = "";
+        runtime.modelFetchStatusKind = "";
+        void refreshAllSections();
+        void fetchModelsFromCurrentProvider(providerID, baseURL)
+          .then((modelInfos) => {
+            const models = modelInfos.map((modelInfo) => modelInfo.id);
+            runtime.modelOptionsBySource.set(
+              buildModelSourceKey(providerID, baseURL),
+              models,
+            );
+            runtime.modelContextBySource.set(
+              buildModelSourceKey(providerID, baseURL),
+              buildModelContextMap(modelInfos),
+            );
+            runtime.modelReasoningBySource.set(
+              buildModelSourceKey(providerID, baseURL),
+              buildModelReasoningMap(modelInfos),
+            );
+            const nextModel = models.includes(currentModel)
+              ? currentModel
+              : models[0] || currentModel;
+            setPref("openaiModel", nextModel);
+            syncReasoningEffortPref(
+              resolveReasoningOptions(providerID, baseURL, nextModel),
+              normalizeReasoningEffort(getPref("openaiReasoningEffort")),
+            );
+            runtime.modelFetchStatusKind = "success";
+            runtime.modelFetchStatusMessage = getModelsFetchedMessage(
+              summarizeModelMetadataAvailability(modelInfos),
+            );
+          })
+          .catch((error) => {
+            const message = formatModelFetchError(error);
+            runtime.modelFetchStatusKind = "error";
+            runtime.modelFetchStatusMessage = message;
+            recordDiagnostic("error", message);
+          })
+          .finally(() => {
+            runtime.modelFetchBusy = false;
+            void refreshAllSections();
+          });
+      },
+      onReasoningChange(value) {
+        setPref("openaiReasoningEffort", normalizeReasoningEffort(value));
+        void refreshAllSections();
+      },
+      onTemplateChange(templateID) {
+        runtime.templateID = templateID;
+        void refreshAllSections();
+      },
+      onWebSearchChange(nextValue) {
         setPref("webSearchEnabled", nextValue);
         runtime.webSearchStatusMessage = "";
         runtime.webSearchStatusKind = "";
         void refreshAllSections();
       },
-    ),
-    createContextToggle(
-      doc,
-      "agent-pdf-tools-toggle",
-      isPdfToolsEnabledPref(),
-      runtime.sending,
-      (nextValue) => {
+      onPdfToolsChange(nextValue) {
         setPref("pdfToolsEnabled", nextValue);
         void refreshAllSections();
       },
-    ),
-    createContextToggle(
-      doc,
-      "agent-pdf-tools-auto-apply",
-      isPdfToolsAutoApplyPref(),
-      runtime.sending || !isPdfToolsEnabledPref(),
-      (nextValue) => {
+      onPdfToolsAutoApplyChange(nextValue) {
         setPref("pdfToolsAutoApply", nextValue);
         void refreshAllSections();
       },
-    ),
+    },
   );
-  controls.append(modelRow, templateRow, contextRow);
-  if (runtime.modelFetchStatusMessage) {
-    const status = doc.createElement("div");
-    status.className = "za-agent-model-status";
-    if (runtime.modelFetchStatusKind) {
-      status.dataset.kind = runtime.modelFetchStatusKind;
-    }
-    status.textContent = runtime.modelFetchStatusMessage;
-    controls.append(status);
-  }
   const composerLocked = hasPendingBatch(conversationKey);
 
   const input = doc.createElement("input");
