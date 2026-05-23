@@ -448,8 +448,9 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~2404 lines. Extracted 21 modules:
+- **`section.ts`**: 3710 → ~2387 lines. Extracted 22 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
+  - `runtime/annotationApprovals.ts` — scoped annotation approval keys, conversation/attachment-scoped always-allow memory, auto-apply decision
   - `runtime/diagnostics.ts` — `recordDiagnostic()`
   - `runtime/requestState.ts` — `requestCancel`, `startWorkingState`, `clearWorkingState`, `startWaitingAnimation`, `stopWaitingAnimation`
   - `runtime/toolActionContent.ts` — `buildMessageActionKey`, `queueToolActionContent`, `takeToolActionContent`
@@ -524,7 +525,7 @@ Estimated size: ~500–600 lines to extract.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~2404 lines (down from 3710)
+- `section.ts`: ~2387 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents

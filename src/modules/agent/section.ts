@@ -38,6 +38,10 @@ import {
   appendToolResultMessage as appendToolResultMessageInRuntime,
 } from "./runtime/conversationMessages";
 import {
+  rememberAnnotationOperationApprovals as rememberAnnotationOperationApprovalsInRuntime,
+  shouldAutoApplyAnnotationBatch as shouldAutoApplyAnnotationBatchInRuntime,
+} from "./runtime/annotationApprovals";
+import {
   clearWorkingState as clearWorkingStateInRuntime,
   requestCancel as requestCancelInRuntime,
   startWorkingState as startWorkingStateInRuntime,
@@ -102,7 +106,6 @@ import {
   clearBatch,
   createBatch,
   getBatchForConversation,
-  getProposalApprovalKey,
   hasPendingBatch,
   rejectAllPending,
   setProposalStatus,
@@ -1345,35 +1348,15 @@ function buildEmptyChatResult(content: string): ChatResult {
 }
 
 function shouldAutoApplyAnnotationBatch(batch: AnnotationBatch): boolean {
-  const approvalKeys = getScopedPendingApprovalKeys(batch);
-  if (!approvalKeys.length) {
-    return false;
-  }
-  if (isPdfToolsAutoApplyPref()) {
-    return true;
-  }
-  return approvalKeys.every((key) =>
-    runtime.approvedAnnotationOperationKeys.has(key),
+  return shouldAutoApplyAnnotationBatchInRuntime(
+    runtime,
+    batch,
+    isPdfToolsAutoApplyPref(),
   );
 }
 
 function rememberAnnotationOperationApprovals(batch: AnnotationBatch): void {
-  for (const key of getScopedPendingApprovalKeys(batch)) {
-    runtime.approvedAnnotationOperationKeys.add(key);
-  }
-}
-
-function getScopedPendingApprovalKeys(batch: AnnotationBatch): string[] {
-  const keys = new Set<string>();
-  for (const proposal of batch.proposals) {
-    if (proposal.status !== "pending") {
-      continue;
-    }
-    keys.add(
-      `${batch.conversationKey}:${proposal.attachmentKey}:${getProposalApprovalKey(proposal)}`,
-    );
-  }
-  return [...keys].sort();
+  rememberAnnotationOperationApprovalsInRuntime(runtime, batch);
 }
 
 function getFirstProposalError(batch: AnnotationBatch): string {
