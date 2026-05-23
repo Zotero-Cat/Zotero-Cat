@@ -1,5 +1,5 @@
 import { getLocaleID, getString } from "../../utils/locale";
-import { getPref, setPref } from "../../utils/prefs";
+import { getPref } from "../../utils/prefs";
 import {
   AgentContextOptions,
   buildRequestMessagesWithContext,
@@ -45,7 +45,6 @@ import {
   requestCancel as requestCancelInRuntime,
   stopWaitingAnimation as stopWaitingAnimationInRuntime,
 } from "./runtime/requestState";
-import { beginUserTurn } from "./runtime/userTurn";
 import {
   ensureConversationStoreLoaded as ensureConversationStoreLoadedInRuntime,
   flushConversationStore as flushConversationStoreInRuntime,
@@ -56,28 +55,11 @@ import {
   failActiveToolEvent as failActiveToolEventInRuntime,
   type ToolEventDeps,
 } from "./runtime/toolEvents";
-import { resolveConversationScopeKey } from "./itemScope";
+import { ReasoningEffortValue } from "./modelMetadata";
 import {
-  ReasoningEffortValue,
-  getDefaultModelForProvider,
-  normalizeProviderID,
-  normalizeReasoningEffort,
-  normalizeString,
-  resolveModelOptions,
-  summarizeModelMetadataAvailability,
-} from "./modelMetadata";
-import {
-  cacheModelInfos,
   getReasoningMetadataState,
   resolveRuntimeModelContextWindow,
-  resolveRuntimeReasoningOptions,
-  syncReasoningEffortPref,
 } from "./modelMetadataRuntime";
-import {
-  fetchModelsFromCurrentProvider,
-  formatModelFetchError,
-} from "./modelListFetch";
-import { openAgentPreferences } from "../prefsPane";
 import {
   getOpenAIToolSpecs,
   hasExecutableAssistantToolAction,
@@ -87,41 +69,17 @@ import {
   isPdfToolsAutoApplyPref,
   isPdfToolsEnabledPref,
 } from "../tools/annotationTools";
-import {
-  acceptAllPending,
-  clearBatch,
-  hasPendingBatch,
-  rejectAllPending,
-  setProposalStatus,
-  type AnnotationBatch,
-} from "../tools/annotationProposals";
+import { type AnnotationBatch } from "../tools/annotationProposals";
 import {
   buildExternalWebSearchContext,
-  isWebSearchEnabledPref,
   type WebSearchRunStatus,
 } from "./webSearchContext";
+import { formatError, getReasoningStatusLabel } from "./ui/labels";
 import {
-  applyRootDimensions,
-  captureScrollState,
-  ensureBodyResizeObserver,
-  isNearBottom,
-  restoreScrollPosition,
-  scrollToBottom,
-} from "./ui/layout";
-import {
-  formatError,
-  getModelsFetchedMessage,
-  getReasoningStatusLabel,
-} from "./ui/labels";
-import { createSessionControls } from "./ui/sessionControls";
-import {
-  isProviderConfigured,
-  renderConversationStoreLoading,
-  renderProviderGate,
-} from "./ui/sectionGates";
-import { renderMessageList } from "./ui/messageList";
-import { createAgentControlPanel } from "./ui/controlPanel";
-import { createAgentComposer } from "./ui/composer";
+  renderSectionBody,
+  type PreparedMessageOptions,
+  type RenderSectionBodyDeps,
+} from "./ui/renderSection";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -130,6 +88,38 @@ const CHAT_MAX_ATTEMPTS = 2;
 const CHAT_RETRY_DELAY_MS = 700;
 
 const runtime: AgentRuntime = createAgentRuntime();
+
+const renderSectionDeps: RenderSectionBodyDeps = {
+  runtime,
+  ensureConversationStoreLoaded: () => ensureConversationStoreLoaded(),
+  saveConversationStore: () => saveConversationStore(),
+  flushConversationStore: () => flushConversationStore(),
+  getActiveConversationForScope: (scopeKey) =>
+    getActiveConversationForScope(scopeKey),
+  getConversationsForScope: (scopeKey) => getConversationsForScope(scopeKey),
+  startNewConversation: (scopeKey) => startNewConversation(scopeKey),
+  clearConversationMessages: (ck) => clearConversationMessages(ck),
+  selectConversation: (scopeKey, ck) => selectConversation(scopeKey, ck),
+  deleteConversation: (scopeKey, ck) => deleteConversation(scopeKey, ck),
+  refreshAllSections: () => refreshAllSections(),
+  recordDiagnostic: (level, message, detail) =>
+    recordDiagnostic(level, message, detail),
+  requestCancel: () => requestCancel(),
+  finishActiveRequest: (ck, token) => finishActiveRequest(ck, token),
+  sendPreparedMessage: (options, ck, idx, token, effort) =>
+    sendPreparedMessage(options, ck, idx, token, effort),
+  handleChatFailure: (error, ck, idx) => handleChatFailure(error, ck, idx),
+  maybeApplyResolvedBatch: (ck) => maybeApplyResolvedBatch(ck),
+  applyBatchAndContinue: (ck, autoAcceptAll) =>
+    applyBatchAndContinue(ck, autoAcceptAll),
+  rememberAnnotationOperationApprovals: (batch) =>
+    rememberAnnotationOperationApprovals(batch),
+  getReasoningStatusText: (providerID, baseURL, model) =>
+    getReasoningStatusText(providerID, baseURL, model),
+  resolveModelContextWindow: (providerID, baseURL, model) =>
+    resolveModelContextWindow(providerID, baseURL, model),
+  getAutomaticContextOptions: () => getAutomaticContextOptions(),
+};
 
 export function registerAgentSection() {
   if (registeredSectionID) {
@@ -157,7 +147,7 @@ export function registerAgentSection() {
       return true;
     },
     onRender: ({ body, item }) => {
-      renderSectionBody(body, item);
+      renderSectionBody(body, item, renderSectionDeps);
     },
   });
   return registeredSectionID;
@@ -170,295 +160,6 @@ export function unregisterAgentSection() {
   Zotero.ItemPaneManager.unregisterSection(registeredSectionID);
   registeredSectionID = false;
   runtime.refreshers.clear();
-}
-
-function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
-  const doc = body.ownerDocument;
-  if (!doc) {
-    return;
-  }
-  if (!isProviderConfigured()) {
-    renderProviderGate(body, doc, {
-      openPreferences: openAgentPreferences,
-      onOpenPreferencesError: (error) => {
-        recordDiagnostic("error", formatError(error));
-      },
-    });
-    return;
-  }
-  if (!runtime.conversationStoreLoaded) {
-    ensureConversationStoreLoaded();
-    renderConversationStoreLoading(body, doc);
-    return;
-  }
-  const conversationScopeKey = resolveConversationScopeKey(item);
-  const conversation = getActiveConversationForScope(conversationScopeKey);
-  const conversationKey = conversation.key;
-  const conversationMessages = conversation.messages;
-  const previousMessages =
-    body.querySelector<HTMLDivElement>(".za-agent-messages");
-  const previousScrollState = previousMessages
-    ? captureScrollState(previousMessages)
-    : null;
-  if (previousMessages) {
-    runtime.shouldAutoScroll =
-      runtime.sending || isNearBottom(previousMessages);
-  }
-
-  const root = doc.createElement("div");
-  root.className = "za-agent-root";
-  applyRootDimensions(root, body);
-  ensureBodyResizeObserver(body);
-
-  const messages = renderMessageList(
-    doc,
-    runtime,
-    conversationKey,
-    conversationMessages,
-    {
-      onAcceptProposal(id) {
-        setProposalStatus(conversationKey, id, "accepted");
-        void maybeApplyResolvedBatch(conversationKey);
-      },
-      onRejectProposal(id) {
-        setProposalStatus(conversationKey, id, "rejected");
-        void maybeApplyResolvedBatch(conversationKey);
-      },
-      onAcceptAllProposals() {
-        acceptAllPending(conversationKey);
-        void applyBatchAndContinue(conversationKey, false);
-      },
-      onAlwaysAllowProposals(batch) {
-        rememberAnnotationOperationApprovals(batch);
-        acceptAllPending(conversationKey);
-        void applyBatchAndContinue(conversationKey, false);
-      },
-      onRejectAllProposals() {
-        rejectAllPending(conversationKey);
-        void maybeApplyResolvedBatch(conversationKey);
-      },
-      onDismissProposals() {
-        runtime.pendingToolFollowUp.delete(conversationKey);
-        clearBatch(conversationKey);
-        void refreshAllSections();
-      },
-    },
-  );
-
-  const providerID = normalizeProviderID(getPref("provider"));
-  const baseURL = normalizeString(getPref("openaiBaseUrl"), "");
-  const currentModel = normalizeString(
-    getPref("openaiModel"),
-    getDefaultModelForProvider(providerID),
-  );
-  const currentReasoningEffort = normalizeReasoningEffort(
-    getPref("openaiReasoningEffort"),
-  );
-  const reasoningOptions = resolveReasoningOptions(
-    providerID,
-    baseURL,
-    currentModel,
-  );
-  const effectiveReasoningEffort = syncReasoningEffortPref(
-    reasoningOptions,
-    currentReasoningEffort,
-  );
-  const modelOptions = resolveModelOptions(
-    providerID,
-    baseURL,
-    currentModel,
-    runtime.modelOptionsBySource,
-  );
-
-  const controls = createAgentControlPanel(
-    doc,
-    {
-      currentModel,
-      effectiveReasoningEffort,
-      modelFetchBusy: runtime.modelFetchBusy,
-      modelFetchStatusKind: runtime.modelFetchStatusKind,
-      modelFetchStatusMessage: runtime.modelFetchStatusMessage,
-      modelOptions,
-      pdfToolsAutoApply: isPdfToolsAutoApplyPref(),
-      pdfToolsEnabled: isPdfToolsEnabledPref(),
-      reasoningOptions,
-      reasoningStatusText: getReasoningStatusText(
-        providerID,
-        baseURL,
-        currentModel,
-      ),
-      sending: runtime.sending,
-      templateID: runtime.templateID,
-      webSearchEnabled: isWebSearchEnabled(),
-    },
-    {
-      onModelChange(model) {
-        const nextModel = normalizeString(model, currentModel);
-        setPref("openaiModel", nextModel);
-        syncReasoningEffortPref(
-          resolveReasoningOptions(providerID, baseURL, nextModel),
-          normalizeReasoningEffort(getPref("openaiReasoningEffort")),
-        );
-        void refreshAllSections();
-      },
-      onFetchModels() {
-        if (runtime.sending || runtime.modelFetchBusy) {
-          return;
-        }
-        runtime.modelFetchBusy = true;
-        runtime.modelFetchStatusMessage = "";
-        runtime.modelFetchStatusKind = "";
-        void refreshAllSections();
-        void fetchModelsFromCurrentProvider(providerID, baseURL)
-          .then((modelInfos) => {
-            const models = cacheModelInfos(
-              runtime,
-              providerID,
-              baseURL,
-              modelInfos,
-            );
-            const nextModel = models.includes(currentModel)
-              ? currentModel
-              : models[0] || currentModel;
-            setPref("openaiModel", nextModel);
-            syncReasoningEffortPref(
-              resolveReasoningOptions(providerID, baseURL, nextModel),
-              normalizeReasoningEffort(getPref("openaiReasoningEffort")),
-            );
-            runtime.modelFetchStatusKind = "success";
-            runtime.modelFetchStatusMessage = getModelsFetchedMessage(
-              summarizeModelMetadataAvailability(modelInfos),
-            );
-          })
-          .catch((error) => {
-            const message = formatModelFetchError(error);
-            runtime.modelFetchStatusKind = "error";
-            runtime.modelFetchStatusMessage = message;
-            recordDiagnostic("error", message);
-          })
-          .finally(() => {
-            runtime.modelFetchBusy = false;
-            void refreshAllSections();
-          });
-      },
-      onReasoningChange(value) {
-        setPref("openaiReasoningEffort", normalizeReasoningEffort(value));
-        void refreshAllSections();
-      },
-      onTemplateChange(templateID) {
-        runtime.templateID = templateID;
-        void refreshAllSections();
-      },
-      onWebSearchChange(nextValue) {
-        setPref("webSearchEnabled", nextValue);
-        runtime.webSearchStatusMessage = "";
-        runtime.webSearchStatusKind = "";
-        void refreshAllSections();
-      },
-      onPdfToolsChange(nextValue) {
-        setPref("pdfToolsEnabled", nextValue);
-        void refreshAllSections();
-      },
-      onPdfToolsAutoApplyChange(nextValue) {
-        setPref("pdfToolsAutoApply", nextValue);
-        void refreshAllSections();
-      },
-    },
-  );
-  const composerLocked = hasPendingBatch(conversationKey);
-
-  const composer = createAgentComposer(
-    doc,
-    {
-      locked: composerLocked,
-      sending: runtime.sending,
-    },
-    {
-      onStop: requestCancel,
-      onSubmit(prompt) {
-        const turn = beginUserTurn(
-          runtime,
-          conversation,
-          conversationKey,
-          prompt,
-        );
-        const templateID = runtime.templateID;
-        const contextOptions = getAutomaticContextOptions();
-        const modelContextWindow = resolveModelContextWindow(
-          providerID,
-          baseURL,
-          currentModel,
-        );
-        const requestReasoningEffort = syncReasoningEffortPref(
-          resolveReasoningOptions(providerID, baseURL, currentModel),
-          normalizeReasoningEffort(getPref("openaiReasoningEffort")),
-        );
-        saveConversationStore();
-        void refreshAllSections();
-        void sendPreparedMessage(
-          {
-            requestMessages: turn.requestMessages,
-            item,
-            contextOptions,
-            templateID,
-            customContext: "",
-            modelContextWindow,
-            prompt,
-          },
-          conversationKey,
-          turn.assistantMessageIndex,
-          turn.requestToken,
-          requestReasoningEffort,
-        )
-          .catch(async (error) => {
-            if (turn.requestToken !== runtime.requestToken) {
-              return;
-            }
-            await handleChatFailure(
-              error,
-              conversationKey,
-              turn.assistantMessageIndex,
-            );
-          })
-          .finally(() => {
-            finishActiveRequest(conversationKey, turn.requestToken);
-          });
-      },
-    },
-  );
-  const rootChildren: HTMLElement[] = [
-    createSessionControls(doc, runtime, conversationScopeKey, conversation, {
-      getConversationsForScope,
-      startNewConversation,
-      clearConversationMessages,
-      selectConversation,
-      deleteConversation,
-      flushConversationStore,
-      refreshAllSections,
-    }),
-    messages,
-    controls,
-  ];
-  rootChildren.push(composer);
-  root.append(...rootChildren);
-  body.replaceChildren(root);
-  if (runtime.shouldAutoScroll || runtime.sending) {
-    scrollToBottom(messages);
-    return;
-  }
-  if (previousScrollState) {
-    restoreScrollPosition(messages, previousScrollState);
-  }
-}
-
-interface PreparedMessageOptions {
-  requestMessages: AgentMessage[];
-  item: Zotero.Item;
-  contextOptions: AgentContextOptions;
-  templateID: string;
-  customContext: string;
-  modelContextWindow: number | null;
-  prompt: string;
 }
 
 async function sendPreparedMessage(
@@ -1055,10 +756,6 @@ async function resolveWebSearchContext(
   });
 }
 
-function isWebSearchEnabled() {
-  return isWebSearchEnabledPref();
-}
-
 function getAutomaticContextOptions(): AgentContextOptions {
   if (isPdfToolsEnabledPref()) {
     return {
@@ -1115,14 +812,6 @@ function resolveModelContextWindow(
   model: string,
 ) {
   return resolveRuntimeModelContextWindow(runtime, providerID, baseURL, model);
-}
-
-function resolveReasoningOptions(
-  providerID: string,
-  baseURL: string,
-  model: string,
-) {
-  return resolveRuntimeReasoningOptions(runtime, providerID, baseURL, model);
 }
 
 function getReasoningStatusText(
