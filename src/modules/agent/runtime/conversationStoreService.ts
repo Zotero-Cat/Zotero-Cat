@@ -68,7 +68,7 @@ export function scheduleConversationStoreSave(
   }, CONVERSATION_STORE_SAVE_DELAY_MS);
 }
 
-export async function writeConversationStoreNow(
+async function writeConversationStoreNow(
   runtime: AgentRuntime,
   deps: ConversationStoreServiceDeps,
 ): Promise<void> {

@@ -1,6 +1,6 @@
 import type { AgentRuntime } from "./state";
 
-export function buildMessageActionKey(
+function buildMessageActionKey(
   conversationKey: string,
   messageIndex: number,
 ): string {

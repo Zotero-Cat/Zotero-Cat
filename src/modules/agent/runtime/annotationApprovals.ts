@@ -28,7 +28,7 @@ export function rememberAnnotationOperationApprovals(
   }
 }
 
-export function getScopedPendingApprovalKeys(batch: AnnotationBatch): string[] {
+function getScopedPendingApprovalKeys(batch: AnnotationBatch): string[] {
   const keys = new Set<string>();
   for (const proposal of batch.proposals) {
     if (proposal.status !== "pending") {

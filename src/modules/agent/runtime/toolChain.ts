@@ -275,7 +275,7 @@ export async function continueAfterAssistantToolAction(
           deps,
           conversationKey,
           eventIndex,
-          externalContext.replace(/^ERROR:s*/, ""),
+          externalContext.replace(/^ERROR:\s*/, ""),
         );
         deps.recordDiagnostic(
           "error",
@@ -515,7 +515,7 @@ export async function continueAfterNativeToolCalls(
         deps,
         conversationKey,
         eventIndex,
-        externalContext.replace(/^ERROR:s*/, ""),
+        externalContext.replace(/^ERROR:\s*/, ""),
       );
       deps.recordDiagnostic(
         "error",
