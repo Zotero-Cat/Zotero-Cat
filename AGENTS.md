@@ -448,7 +448,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~1298 lines. Extracted 26 modules:
+- **`section.ts`**: 3710 → ~987 lines. Extracted 27 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
   - `runtime/annotationApprovals.ts` — scoped annotation approval keys, conversation/attachment-scoped always-allow memory, auto-apply decision
   - `runtime/annotationFollowUp.ts` — post-annotation batch follow-up message construction for text-mode and native tool-call turns
@@ -469,6 +469,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `ui/labels.ts` — `getModelLabel`, `getFetchModelsLabel`, `getReasoningLabel`, `getReasoningOptionLabel`, `getReasoningStatusLabel`, `formatError`, `normalizeAuthKey`, etc.
   - `ui/layout.ts` — `ScrollState`, `isNearBottom`, `scrollToBottom`, `captureScrollState`, `restoreScrollPosition`, `applyRootDimensions`, `ensureBodyResizeObserver`
   - `ui/messageList.ts` — message bubbles, annotation proposal card mount, activity-status mount, message-list scroll tracking
+  - `ui/renderSection.ts` — `RenderSectionBodyDeps` interface, `renderSectionBody` DOM coordination (gate checks, message list, control panel, composer, session controls, scroll state)
   - `ui/messageMeta.ts` — `createMessageMeta`, `formatMessageDateTime`, `formatWaitSeconds`, `createCopyButton`, `createContextToggle`
   - `ui/modelControls.ts` — `renderModelOptions`, `renderReasoningOptions`
   - `ui/sectionGates.ts` — provider configuration gate, loading gate, provider-configured check
@@ -493,15 +494,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Pending Tasks
 
-#### Task #6 — Extract `renderSectionBody`
-
-Extract into `agent/ui/sectionBody.ts`:
-
-- `renderSectionBody(doc, root, runtime, ...)` — ~280 lines of DOM coordination
-
-**Challenge**: `renderSectionBody` orchestrates the full DOM tree and wires all event handlers. It currently closes over many `section.ts` locals. The extraction must pass a render-context object with all required callbacks.
-
-Estimated size: ~300–400 lines to extract.
+No remaining refactoring tasks from the current phase.
 
 ### Current State
 
@@ -509,7 +502,7 @@ Estimated size: ~300–400 lines to extract.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~1298 lines (down from 3710)
+- `section.ts`: ~987 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents
