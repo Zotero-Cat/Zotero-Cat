@@ -5,8 +5,8 @@ import type {
   AnnotationBatch,
   AnnotationProposal,
   AnnotationProposalStatus,
-} from "./annotationProposals";
-import { summarizeBatch } from "./annotationProposals";
+} from "../tools/annotationProposals";
+import { summarizeBatch } from "../tools/annotationProposals";
 
 export interface ProposalViewHandlers {
   onAccept: (proposalID: string) => void;

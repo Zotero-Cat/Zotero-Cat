@@ -442,6 +442,93 @@ Recommended order:
 9. Keep release notes and public docs bilingual whenever user-facing Markdown changes.
 10. Add public contact and security email after Zoho Mail is configured for `zoterocat.org`.
 
+## Ongoing Refactoring (Phase 1 Partial — 2026-05-23)
+
+A systematic refactoring pass is in progress to reduce coupling in `section.ts` and `provider.ts`. Phase 1 (pure leaf extraction + provider split) is complete. Phases 2 and 3 are pending.
+
+### Completed
+
+- **`section.ts`**: 3710 → ~2806 lines. Extracted 12 modules:
+  - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
+  - `runtime/diagnostics.ts` — `recordDiagnostic()`
+  - `runtime/requestState.ts` — `requestCancel`, `startWorkingState`, `clearWorkingState`, `startWaitingAnimation`, `stopWaitingAnimation`
+  - `runtime/toolActionContent.ts` — `buildMessageActionKey`, `queueToolActionContent`, `takeToolActionContent`
+  - `runtime/conversationStoreService.ts` — `ensureConversationStoreLoaded`, `flushConversationStore`, `scheduleConversationStoreSave`, `writeConversationStoreNow` (uses `ConversationStoreServiceDeps` for DI)
+  - `runtime/toolEvents.ts` — `appendToolEventMessage`, `markToolEventDone`, `markToolEventFailed`, `failActiveToolEvent` (uses `ToolEventDeps` for DI)
+  - `ui/activityStatus.ts` — `renderActivityStatus`, `getActivityStatusInfo`, `formatWebSearchStatus`, `formatToolEventStatus`
+  - `ui/sessionControls.ts` — `SessionControlsHandlers` interface, `createSessionControls()`
+  - `ui/sessionOptions.ts` — `limitConversationOptions`, `formatConversationOptionLabel`, `buildConversationExportText`, `copyConversationToClipboard`, `promptRenameConversation`, `showToast`
+  - `ui/labels.ts` — `getModelLabel`, `getFetchModelsLabel`, `getReasoningLabel`, `getReasoningOptionLabel`, `getReasoningStatusLabel`, `formatError`, `normalizeAuthKey`, etc.
+  - `ui/layout.ts` — `ScrollState`, `isNearBottom`, `scrollToBottom`, `captureScrollState`, `restoreScrollPosition`, `applyRootDimensions`, `ensureBodyResizeObserver`
+  - `ui/messageMeta.ts` — `createMessageMeta`, `formatMessageDateTime`, `formatWaitSeconds`, `createCopyButton`, `createContextToggle`
+  - `ui/modelControls.ts` — `renderModelOptions`, `renderReasoningOptions`
+
+- **`provider.ts`**: 1356 → ~803 lines. Extracted 3 modules:
+  - `provider/streaming.ts` — `StreamCollector`, `ResponseIdleWatchdog`, `createStreamCollector`, `createResponseIdleWatchdog`, SSE parsing, `extractStreamDelta`, `extractReasoningDelta`
+  - `provider/responseParsing.ts` — `OpenAIChatResponse`, `extractResponseToolCalls`, `extractFinishReason`, `extractResponseReasoningContent`, error-message classification
+  - `provider/endpointHints.ts` — `EndpointHintsMap`, `readEndpointHint`, `rememberEndpointHint`, `isValidWireAPI`
+
+- **Tool module reorganization**: Moved annotation tool state and repair logic under `src/modules/tools/`:
+  - `tools/annotationTools.ts` — PDF read/write tool registration and action-to-proposal resolution
+  - `tools/annotationProposals.ts` — annotation proposal state machine
+  - `tools/annotationRepair.ts` — failed-only annotation batch repair prompt/context helpers
+
+- All extraction uses explicit dependency injection (handler/deps interfaces), no runtime singleton coupling.
+- Lint, build, and all 158 tests pass.
+
+### Pending Tasks
+
+#### Task #5 — Extract orchestration from `section.ts`
+
+Extract the large orchestration functions into a dedicated module. These are the core chat/tool/annotation flows with deep coupling to 25+ local helpers and the `AgentRuntime`:
+
+- `sendChat()` and follow-up request logic
+- `runToolChain()` — tool-action parsing → execute → follow-up loop
+- `applyAnnotationBatch()` — proposal batch → Zotero annotation save → follow-up
+- `repairAnnotationBatch()` — failed-only batch repair follow-up
+- Helper functions: `cancelActiveRequest`, `appendAssistantMessage`, `appendToolResultMessage`, `buildProviderMessages`, `handleStreamProgress`, `handleStreamFinish`
+
+**Challenge**: These functions read and mutate `AgentRuntime` state (messages, pendingToolFollowUp, diagnostics, activeRequestToken) and call back into UI rendering (`renderSectionBody`, `renderMessages`, `scrollToBottom`). The extraction must define a clear orchestration-deps interface that provides:
+
+- State access: `getRuntime()`, `getConversationKey()`, `getScopeKey()`
+- Mutation: `appendMessage()`, `updateMessage()`, `touchConversation()`
+- UI callbacks: `renderMessages()`, `scrollToBottom()`, `showActivityStatus()`
+- Provider: `sendProviderRequest()`
+- Tool execution: `executeToolAction()`
+
+Estimated size: ~1000–1200 lines to extract.
+
+#### Task #6 — Extract `renderSectionBody` and gate functions
+
+Extract into `agent/ui/sectionBody.ts`:
+
+- `renderSectionBody(doc, root, runtime, ...)` — ~470 lines of DOM coordination
+- `isProviderConfigured()` — checks API key + base URL
+- `renderProviderGate(doc, root, ...)` — onboarding/no-config placeholder
+- `renderConversationStoreLoading(doc, root, ...)` — loading state
+
+**Challenge**: `renderSectionBody` orchestrates the full DOM tree and wires all event handlers. It currently closes over many `section.ts` locals. The extraction must pass a render-context object with all required callbacks.
+
+Estimated size: ~500–600 lines to extract.
+
+#### Task #9 — Fix PDF cross-span hyphenated word matching bug
+
+**Root cause**: When the model proposes a highlight with text like "...attack settings, with..." but the PDF has a line-break hyphen in "set-\ntings", the verbatim match fails. The existing `normalizeForMatching` regex `(\w)-\s+(\w)` in `pdfReader.ts:871` should handle this, and `buildNormalizedIndex` at line 790 has the same regex for cross-span rejoin. Investigation needed:
+
+1. Add a test case in `test/pdf-tools-logic.test.ts` with an ASCII hyphen mid-word spanning two text spans to reproduce
+2. Debug why the existing regex doesn't catch "set-\ntings" — possibly the hyphen + newline is within a single text span (not across spans), or the `\s+` pattern doesn't match the specific whitespace character
+3. Fix: extend `normalizeForMatching` to also handle `(\w)-\n(\w)` within a single span, or broaden the cross-span join logic
+4. The memory file `glm-4-5-air-verbatim-drift.md` documents other known failure modes for glm-4.5-air
+
+### Current State
+
+- Branch: `main`, worktree may be dirty (pending extraction commits)
+- Lint: clean
+- Build: passes
+- Tests: 158 pass, 0 fail
+- `section.ts`: ~2806 lines (down from 3710)
+- `provider.ts`: ~803 lines (down from 1356)
+
 ## Editing Notes For Future Agents
 
 - Preserve user changes. The worktree may be dirty.

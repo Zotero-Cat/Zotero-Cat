@@ -1,5 +1,5 @@
 import { assert } from "chai";
-import { annotationToolsTestUtils } from "../src/modules/agent/annotationTools";
+import { annotationToolsTestUtils } from "../src/modules/tools/annotationTools";
 import { pdfReaderTestUtils } from "../src/modules/tools/pdfReader";
 import { pdfAnnotationsTestUtils } from "../src/modules/tools/pdfAnnotations";
 
@@ -219,6 +219,33 @@ describe("pdf tools logic", function () {
         "synchronous events",
       );
       assert.isNotNull(match);
+    });
+
+    it("rejoins ASCII hyphenated words split across spans inside a sentence", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "In contrast, our method maintains high accuracy in both normal and attack set-",
+          x: 0,
+          y: 0,
+          width: 540,
+          height: 10,
+        },
+        {
+          text: "tings, with an average decrease of less than 1%.",
+          x: 540,
+          y: 0,
+          width: 260,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "In contrast, our method maintains high accuracy in both normal and attack settings, with an average decrease of less than 1%.",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+      assert.equal(match?.pageIndex, 0);
     });
 
     it("preserves inline compound hyphens", function () {

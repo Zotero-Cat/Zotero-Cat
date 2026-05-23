@@ -17,18 +17,9 @@ import {
 } from "./functionCalling/quirks";
 import { runAssistantTurn } from "./functionCalling/runner";
 import { shouldRetryChatError, isAbortError } from "./chatRetry";
+import { touchConversation } from "./conversationStore";
 import {
-  ConversationState,
-  MAX_VISIBLE_CONVERSATION_OPTIONS,
-  RuntimeMessage,
-  touchConversation,
-} from "./conversationStore";
-import {
-  ConversationRuntimeState,
-  MessagePointer,
-  applyConversationStoreToRuntime,
   clearConversationMessages as clearConversationMessagesInRuntime,
-  createConversationRuntimeState,
   createNewConversationForScope,
   deleteConversation as deleteConversationInRuntime,
   getActiveConversationForScope as getActiveConversationForScopeInRuntime,
@@ -41,9 +32,35 @@ import {
   touchConversationByKey as touchConversationByKeyInRuntime,
 } from "./conversationRuntime";
 import {
-  loadConversationFileStore,
-  saveConversationFileStore,
-} from "./conversationFileStore";
+  AgentRuntime,
+  createAgentRuntime,
+  PendingToolFollowUp,
+} from "./runtime/state";
+import { recordDiagnostic as recordDiagnosticInRuntime } from "./runtime/diagnostics";
+import {
+  queueToolActionContent as queueToolActionContentInRuntime,
+  takeToolActionContent as takeToolActionContentInRuntime,
+} from "./runtime/toolActionContent";
+import {
+  clearWorkingState as clearWorkingStateInRuntime,
+  requestCancel as requestCancelInRuntime,
+  startWaitingAnimation as startWaitingAnimationInRuntime,
+  startWorkingState as startWorkingStateInRuntime,
+  stopWaitingAnimation as stopWaitingAnimationInRuntime,
+} from "./runtime/requestState";
+import {
+  ensureConversationStoreLoaded as ensureConversationStoreLoadedInRuntime,
+  flushConversationStore as flushConversationStoreInRuntime,
+  scheduleConversationStoreSave as scheduleConversationStoreSaveInRuntime,
+  type ConversationStoreServiceDeps,
+} from "./runtime/conversationStoreService";
+import {
+  appendToolEventMessage as appendToolEventMessageInRuntime,
+  failActiveToolEvent as failActiveToolEventInRuntime,
+  markToolEventDone as markToolEventDoneInRuntime,
+  markToolEventFailed as markToolEventFailedInRuntime,
+  type ToolEventDeps,
+} from "./runtime/toolEvents";
 import { resolveConversationScopeKey } from "./itemScope";
 import {
   ReasoningEffortValue,
@@ -62,12 +79,7 @@ import {
   resolveModelOptions,
   summarizeModelMetadataAvailability,
 } from "./modelMetadata";
-import {
-  DEFAULT_PROMPT_TEMPLATE_ID,
-  getPromptTemplateByID,
-  getPromptTemplates,
-} from "./promptTemplates";
-import { createRuntimeID } from "./runtimeIds";
+import { getPromptTemplateByID, getPromptTemplates } from "./promptTemplates";
 import { getProviderApiKey } from "./secureApiKey";
 import { openAgentPreferences } from "../prefsPane";
 import {
@@ -87,7 +99,7 @@ import {
   isPdfToolsAutoApplyPref,
   isPdfToolsEnabledPref,
   resolveWriteAction,
-} from "./annotationTools";
+} from "../tools/annotationTools";
 import {
   acceptAllPending,
   clearBatch,
@@ -100,19 +112,13 @@ import {
   summarizeBatch,
   type AnnotationBatch,
   type AnnotationProposal,
-} from "./annotationProposals";
+} from "../tools/annotationProposals";
 import {
   buildFailedAnnotationRepairPrompt,
   gatherFailedAnnotationPageText,
   shouldRepairFailedAnnotationBatch,
-} from "./annotationRepair";
+} from "../tools/annotationRepair";
 import { renderProposalBatch } from "./proposalView";
-import {
-  createRunningToolEventMessage,
-  getToolEventLabelID,
-  markToolEventMessage,
-  normalizeToolKind,
-} from "./toolEventState";
 import {
   createAnnotation,
   deleteAnnotation,
@@ -125,117 +131,43 @@ import {
   type WebSearchRunStatus,
 } from "./webSearchContext";
 import { renderMessageMarkdown } from "./markdown";
-import { truncateInline, formatShortDateTime } from "../../utils/text";
-import { copyTextToClipboard } from "../../utils/clipboard";
-import { showCopyFeedback } from "../../utils/copyButton";
+import {
+  applyRootDimensions,
+  captureScrollState,
+  ensureBodyResizeObserver,
+  isNearBottom,
+  restoreScrollPosition,
+  scrollToBottom,
+} from "./ui/layout";
+import {
+  createContextToggle,
+  createCopyButton,
+  createMessageMeta,
+} from "./ui/messageMeta";
+import {
+  formatError,
+  formatModelFetchError,
+  getFetchModelsLabel,
+  getFetchingModelsLabel,
+  getModelLabel,
+  getModelParseMessages,
+  getModelsFetchedMessage,
+  getReasoningLabel,
+  getReasoningStatusLabel,
+  normalizeAuthKey,
+} from "./ui/labels";
+import { renderActivityStatus } from "./ui/activityStatus";
+import { createSessionControls } from "./ui/sessionControls";
+import { renderModelOptions, renderReasoningOptions } from "./ui/modelControls";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
 const TYPEWRITER_DELAY_MS = 18;
-const SCROLL_BOTTOM_THRESHOLD_PX = 24;
 const MODEL_FETCH_TIMEOUT_MS = 25_000;
-const ROOT_HEIGHT_RATIO = 0.85;
 const CHAT_MAX_ATTEMPTS = 2;
 const CHAT_RETRY_DELAY_MS = 700;
-const CONVERSATION_STORE_SAVE_DELAY_MS = 1200;
-const MAX_DIAGNOSTIC_ENTRIES = 30;
-const resizeObservers = new WeakMap<HTMLDivElement, ResizeObserver>();
 
-interface ScrollState {
-  scrollTop: number;
-  scrollHeight: number;
-  clientHeight: number;
-}
-
-interface DiagnosticEntry {
-  id: string;
-  level: "info" | "warning" | "error";
-  createdAt: number;
-  message: string;
-  detail?: string;
-}
-
-interface AgentRuntime extends ConversationRuntimeState {
-  conversationStoreLoaded: boolean;
-  conversationStoreLoading: boolean;
-  sending: boolean;
-  workingConversationKey: string | null;
-  streamingAssistant: MessagePointer | null;
-  waitingAssistant: MessagePointer | null;
-  waitingStartedAt: number | null;
-  waitingToken: number;
-  requestToken: number;
-  cancelRequested: boolean;
-  cancelActiveRequest: (() => void) | null;
-  shouldAutoScroll: boolean;
-  templateID: string;
-  modelOptionsBySource: Map<string, string[]>;
-  modelContextBySource: Map<string, Map<string, number>>;
-  modelReasoningBySource: Map<string, Map<string, ReasoningEffortValue[]>>;
-  modelFetchBusy: boolean;
-  modelFetchStatusMessage: string;
-  modelFetchStatusKind: "success" | "error" | "";
-  webSearchStatusMessage: string;
-  webSearchStatusKind: "success" | "error" | "";
-  diagnostics: DiagnosticEntry[];
-  refreshers: Map<string, () => Promise<void>>;
-  pendingToolFollowUp: Map<string, PendingToolFollowUp>;
-  activeToolEventByKey: Map<string, number>;
-  latestToolEventByKey: Map<string, number>;
-  approvedAnnotationOperationKeys: Set<string>;
-  detectedToolActionByKey: Set<string>;
-  pendingToolActionContentByMessage: Map<string, string>;
-  conversationStoreSaveTimer: ReturnType<typeof setTimeout> | null;
-}
-
-interface PendingToolFollowUp {
-  requestMessages: AgentMessage[];
-  assistantContent: string;
-  assistantMessageIndex: number;
-  reasoningEffort: ReasoningEffortValue;
-  item: Zotero.Item | null;
-  readResults: string;
-  nativeToolCalls?: AssistantToolCall[];
-  nativeWriteCalls?: AssistantToolCall[];
-  nativeReadResults?: Array<{
-    toolCall: AssistantToolCall;
-    result: string;
-  }>;
-}
-
-const runtime: AgentRuntime = {
-  ...createConversationRuntimeState(),
-  conversationStoreLoaded: false,
-  conversationStoreLoading: false,
-  sending: false,
-  workingConversationKey: null,
-  streamingAssistant: null,
-  waitingAssistant: null,
-  waitingStartedAt: null,
-  waitingToken: 0,
-  requestToken: 0,
-  cancelRequested: false,
-  cancelActiveRequest: null,
-  shouldAutoScroll: true,
-  templateID: DEFAULT_PROMPT_TEMPLATE_ID,
-  modelOptionsBySource: new Map(),
-  modelContextBySource: new Map(),
-  modelReasoningBySource: new Map(),
-  modelFetchBusy: false,
-  modelFetchStatusMessage: "",
-  modelFetchStatusKind: "",
-  webSearchStatusMessage: "",
-  webSearchStatusKind: "",
-  diagnostics: [],
-  refreshers: new Map(),
-  pendingToolFollowUp: new Map(),
-  activeToolEventByKey: new Map(),
-  latestToolEventByKey: new Map(),
-  approvedAnnotationOperationKeys: new Set(),
-  detectedToolActionByKey: new Set(),
-  pendingToolActionContentByMessage: new Map(),
-  conversationStoreSaveTimer: null,
-};
+const runtime: AgentRuntime = createAgentRuntime();
 
 export function registerAgentSection() {
   if (registeredSectionID) {
@@ -442,7 +374,7 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
     renderedMessages += 1;
   }
 
-  const activityStatus = renderActivityStatus(doc, conversationKey);
+  const activityStatus = renderActivityStatus(doc, runtime, conversationKey);
   if (activityStatus) {
     messages.appendChild(activityStatus);
     renderedMessages += 1;
@@ -768,7 +700,15 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
 
   composer.append(input, sendButton);
   const rootChildren: HTMLElement[] = [
-    createSessionControls(doc, conversationScopeKey, conversation),
+    createSessionControls(doc, runtime, conversationScopeKey, conversation, {
+      getConversationsForScope,
+      startNewConversation,
+      clearConversationMessages,
+      selectConversation,
+      deleteConversation,
+      flushConversationStore,
+      refreshAllSections,
+    }),
     messages,
     controls,
   ];
@@ -911,37 +851,31 @@ async function sendMessage(
 
 const MAX_TOOL_CHAIN_DEPTH = 24;
 
+const toolEventDeps: ToolEventDeps = {
+  getConversationMessage,
+  touchConversationByKey,
+  clearWebSearchStatus,
+};
+
 function appendToolEventMessage(
   conversationKey: string,
   toolType: string,
 ): number {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation) {
-    return -1;
-  }
-  if (normalizeToolKind(toolType) !== "web-search") {
-    clearWebSearchStatus();
-  }
-  const index =
-    conversation.messages.push(createRunningToolEventMessage(toolType)) - 1;
-  runtime.activeToolEventByKey.set(conversationKey, index);
-  runtime.latestToolEventByKey.set(conversationKey, index);
-  if (runtime.sending) {
-    startWorkingState(conversationKey);
-  }
-  touchConversationByKey(conversationKey);
-  return index;
+  return appendToolEventMessageInRuntime(
+    runtime,
+    conversationKey,
+    toolType,
+    toolEventDeps,
+  );
 }
 
 function markToolEventDone(conversationKey: string, messageIndex: number) {
-  const message = getConversationMessage(conversationKey, messageIndex);
-  if (!markToolEventMessage(message, "done")) {
-    return;
-  }
-  if (runtime.activeToolEventByKey.get(conversationKey) === messageIndex) {
-    runtime.activeToolEventByKey.delete(conversationKey);
-  }
-  touchConversationByKey(conversationKey);
+  markToolEventDoneInRuntime(
+    runtime,
+    conversationKey,
+    messageIndex,
+    toolEventDeps,
+  );
 }
 
 function markToolEventFailed(
@@ -949,25 +883,22 @@ function markToolEventFailed(
   messageIndex: number,
   errorMessage: string,
 ) {
-  const message = getConversationMessage(conversationKey, messageIndex);
-  if (!markToolEventMessage(message, "failed", { errorMessage })) {
-    return;
-  }
-  if (runtime.activeToolEventByKey.get(conversationKey) === messageIndex) {
-    runtime.activeToolEventByKey.delete(conversationKey);
-  }
-  touchConversationByKey(conversationKey);
+  markToolEventFailedInRuntime(
+    runtime,
+    conversationKey,
+    messageIndex,
+    errorMessage,
+    toolEventDeps,
+  );
 }
 
 function failActiveToolEvent(conversationKey: string, errorMessage: string) {
-  const index = runtime.activeToolEventByKey.get(conversationKey);
-  if (typeof index === "number") {
-    markToolEventFailed(conversationKey, index, errorMessage);
-  }
-}
-
-function buildMessageActionKey(conversationKey: string, messageIndex: number) {
-  return `${conversationKey}::${messageIndex}`;
+  failActiveToolEventInRuntime(
+    runtime,
+    conversationKey,
+    errorMessage,
+    toolEventDeps,
+  );
 }
 
 function queueToolActionContent(
@@ -975,8 +906,10 @@ function queueToolActionContent(
   messageIndex: number,
   content: string,
 ) {
-  runtime.pendingToolActionContentByMessage.set(
-    buildMessageActionKey(conversationKey, messageIndex),
+  queueToolActionContentInRuntime(
+    runtime,
+    conversationKey,
+    messageIndex,
     content,
   );
 }
@@ -985,10 +918,7 @@ function takeToolActionContent(
   conversationKey: string,
   messageIndex: number,
 ): string {
-  const key = buildMessageActionKey(conversationKey, messageIndex);
-  const content = runtime.pendingToolActionContentByMessage.get(key) || "";
-  runtime.pendingToolActionContentByMessage.delete(key);
-  return content;
+  return takeToolActionContentInRuntime(runtime, conversationKey, messageIndex);
 }
 
 function appendToolResultMessage(
@@ -2618,132 +2548,18 @@ function hasReasoningMetadata(
   );
 }
 
-function renderModelOptions(select: HTMLSelectElement, models: string[]) {
-  const doc = select.ownerDocument;
-  if (!doc) {
-    return;
-  }
-  select.replaceChildren();
-  for (const model of models) {
-    const option = doc.createElement("option");
-    option.value = model;
-    option.textContent = model;
-    select.appendChild(option);
-  }
-}
-
-function renderReasoningOptions(
-  select: HTMLSelectElement,
-  values: ReasoningEffortValue[],
-) {
-  const doc = select.ownerDocument;
-  if (!doc) {
-    return;
-  }
-  select.replaceChildren();
-  for (const value of values) {
-    const option = doc.createElement("option");
-    option.value = value;
-    option.textContent = getReasoningOptionLabel(value);
-    select.appendChild(option);
-  }
-}
-
-function getReasoningOptionLabel(value: ReasoningEffortValue) {
-  const zh = Zotero.locale.startsWith("zh");
-  switch (value) {
-    case "default":
-      return zh ? "默认" : "Default";
-    case "none":
-      return zh ? "无" : "None";
-    case "minimal":
-      return zh ? "最小" : "Minimal";
-    case "low":
-      return zh ? "低" : "Low";
-    case "medium":
-      return zh ? "中" : "Medium";
-    case "high":
-      return zh ? "高" : "High";
-    case "xhigh":
-      return zh ? "最高" : "XHigh";
-    default:
-      return value;
-  }
-}
-
-function getModelLabel() {
-  return Zotero.locale.startsWith("zh") ? "模型" : "Model";
-}
-
-function getFetchModelsLabel() {
-  return Zotero.locale.startsWith("zh") ? "获取模型列表" : "Fetch Model List";
-}
-
-function getFetchingModelsLabel() {
-  return Zotero.locale.startsWith("zh") ? "获取中..." : "Fetching...";
-}
-
-function getReasoningLabel() {
-  return Zotero.locale.startsWith("zh") ? "思考强度" : "Reasoning";
-}
-
 function getReasoningStatusText(
   providerID: string,
   baseURL: string,
   model: string,
 ) {
   if (hasReasoningMetadata(providerID, baseURL, model)) {
-    return Zotero.locale.startsWith("zh")
-      ? "由提供方声明"
-      : "Provider declared";
+    return getReasoningStatusLabel("declared");
   }
   if (hasQueriedModelReasoning(providerID, baseURL)) {
-    return Zotero.locale.startsWith("zh") ? "提供方未声明" : "Not declared";
+    return getReasoningStatusLabel("queried-undeclared");
   }
-  return Zotero.locale.startsWith("zh") ? "未查询" : "Not queried";
-}
-
-function getModelsFetchedMessage(
-  availability: ReturnType<typeof summarizeModelMetadataAvailability>,
-) {
-  const { modelCount, contextWindowCount, reasoningEffortCount } = availability;
-  return Zotero.locale.startsWith("zh")
-    ? `已从站点获取 ${modelCount} 个模型；${contextWindowCount} 个声明模型上下文，${reasoningEffortCount} 个声明思考强度。`
-    : `Fetched ${modelCount} models from site; ${contextWindowCount} declared context windows and ${reasoningEffortCount} declared reasoning options.`;
-}
-
-function getNoModelListMessage() {
-  return Zotero.locale.startsWith("zh")
-    ? "站点返回结果里没有模型列表字段。"
-    : "Site response does not contain a model-list field.";
-}
-
-function getEmptyModelListMessage() {
-  return Zotero.locale.startsWith("zh")
-    ? "站点返回了空模型列表。"
-    : "Site returned an empty model list.";
-}
-
-function getModelParseMessages() {
-  return {
-    emptyModelList: getEmptyModelListMessage(),
-    invalidJSON: Zotero.locale.startsWith("zh")
-      ? "站点返回 JSON 解析失败。"
-      : "Failed to parse JSON from site.",
-    noModelList: getNoModelListMessage(),
-    nonJSON: Zotero.locale.startsWith("zh")
-      ? "站点返回的不是 JSON。"
-      : "Site did not return JSON.",
-  };
-}
-
-function formatModelFetchError(error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
-  const normalized = text.trim();
-  return (
-    normalized ||
-    (Zotero.locale.startsWith("zh") ? "获取失败。" : "Fetch failed.")
-  );
+  return getReasoningStatusLabel("not-queried");
 }
 
 async function fetchModelsFromCurrentProvider(
@@ -2807,23 +2623,6 @@ async function fetchModelsFromCurrentProvider(
   throw lastError || new Error(formatModelFetchError(""));
 }
 
-function normalizeAuthKey(rawKey: string) {
-  let value = rawKey.trim();
-  if (!value) {
-    return "";
-  }
-  value = value.replace(/^['"]|['"]$/g, "").trim();
-  value = value.replace(/^bearer\s+/i, "").trim();
-  return value;
-}
-
-function formatError(error: unknown) {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
-
 async function refreshAllSections() {
   await Promise.all(
     [...runtime.refreshers.values()].map(async (refresh) => {
@@ -2866,123 +2665,6 @@ async function streamAssistantReply(
       await Zotero.Promise.delay(TYPEWRITER_DELAY_MS);
     }
   }
-}
-
-function isNearBottom(messages: HTMLDivElement) {
-  const distance =
-    messages.scrollHeight - (messages.scrollTop + messages.clientHeight);
-  return distance <= SCROLL_BOTTOM_THRESHOLD_PX;
-}
-
-function scrollToBottom(messages: HTMLDivElement) {
-  messages.scrollTop = messages.scrollHeight;
-  const view = messages.ownerDocument?.defaultView;
-  if (!view) {
-    return;
-  }
-  view.requestAnimationFrame(() => {
-    messages.scrollTop = messages.scrollHeight;
-  });
-  view.setTimeout(() => {
-    messages.scrollTop = messages.scrollHeight;
-  }, 24);
-}
-
-function captureScrollState(messages: HTMLDivElement): ScrollState {
-  return {
-    scrollTop: messages.scrollTop,
-    scrollHeight: messages.scrollHeight,
-    clientHeight: messages.clientHeight,
-  };
-}
-
-function restoreScrollPosition(messages: HTMLDivElement, state: ScrollState) {
-  const previousDistanceFromBottom = Math.max(
-    0,
-    state.scrollHeight - (state.scrollTop + state.clientHeight),
-  );
-  messages.scrollTop = Math.max(
-    0,
-    messages.scrollHeight - messages.clientHeight - previousDistanceFromBottom,
-  );
-}
-
-function computeFixedRootHeight(body: HTMLDivElement) {
-  const doc = body.ownerDocument;
-  if (!doc) {
-    return 360;
-  }
-  const paneContent = doc.getElementById(
-    "zotero-item-pane-content",
-  ) as HTMLElement | null;
-  const baseHeight = firstPositive(
-    doc.defaultView ? Math.floor(doc.defaultView.innerHeight) : 0,
-    doc.documentElement?.clientHeight,
-    paneContent?.clientHeight,
-    body.parentElement?.clientHeight,
-    body.clientHeight,
-  );
-  return Math.max(220, Math.floor(baseHeight * ROOT_HEIGHT_RATIO));
-}
-
-function firstPositive(...values: Array<number | undefined>) {
-  for (const value of values) {
-    if (typeof value === "number" && value > 0) {
-      return value;
-    }
-  }
-  return 480;
-}
-
-function computeAvailableWidth(body: HTMLDivElement) {
-  const doc = body.ownerDocument;
-  if (!doc) {
-    return 300;
-  }
-  const paneContent = doc.getElementById(
-    "zotero-item-pane-content",
-  ) as HTMLElement | null;
-  return firstPositive(
-    body.clientWidth,
-    body.parentElement?.clientWidth,
-    paneContent?.clientWidth,
-  );
-}
-
-function applyRootDimensions(root: HTMLDivElement, body: HTMLDivElement) {
-  const fixedHeight = computeFixedRootHeight(body);
-  const availableWidth = computeAvailableWidth(body);
-  root.style.height = `${fixedHeight}px`;
-  root.style.minHeight = `${fixedHeight}px`;
-  root.style.maxHeight = `${fixedHeight}px`;
-  root.style.width = "100%";
-  root.style.maxWidth = `${availableWidth}px`;
-  root.style.overflow = "hidden";
-}
-
-function ensureBodyResizeObserver(body: HTMLDivElement) {
-  if (resizeObservers.has(body)) {
-    return;
-  }
-  const win = body.ownerDocument?.defaultView;
-  if (!win) {
-    return;
-  }
-  const ObserverCtor = (win as unknown as Record<string, unknown>)
-    .ResizeObserver as
-    | (new (callback: ResizeObserverCallback) => ResizeObserver)
-    | undefined;
-  if (!ObserverCtor) {
-    return;
-  }
-  const observer = new ObserverCtor(() => {
-    const root = body.querySelector<HTMLDivElement>(".za-agent-root");
-    if (root) {
-      applyRootDimensions(root, body);
-    }
-  });
-  observer.observe(body);
-  resizeObservers.set(body, observer);
 }
 
 function getActiveConversationForScope(scopeKey: string) {
@@ -3044,89 +2726,25 @@ function deleteConversation(scopeKey: string, conversationKey: string) {
   flushConversationStore();
 }
 
-function ensureConversationStoreLoaded() {
-  if (runtime.conversationStoreLoaded || runtime.conversationStoreLoading) {
-    return;
-  }
-  runtime.conversationStoreLoading = true;
-  void loadConversationFileStore()
-    .then((store) => {
-      if (runtime.conversationStoreLoaded) {
-        return;
-      }
-      applyConversationStore(store);
-      runtime.conversationStoreLoaded = true;
-    })
-    .catch((error) => {
-      recordDiagnostic(
-        "error",
-        "Failed to load conversation history",
-        formatError(error),
-      );
-      runtime.conversationStoreLoaded = true;
-    })
-    .finally(() => {
-      runtime.conversationStoreLoading = false;
-      void refreshAllSections();
-    });
-}
+const conversationStoreDeps: ConversationStoreServiceDeps = {
+  refreshAllSections: () => refreshAllSections(),
+  formatError,
+};
 
-function applyConversationStore(
-  store: Awaited<ReturnType<typeof loadConversationFileStore>>,
-) {
-  applyConversationStoreToRuntime(runtime, store);
+function ensureConversationStoreLoaded() {
+  ensureConversationStoreLoadedInRuntime(runtime, conversationStoreDeps);
 }
 
 function saveConversationStore() {
-  scheduleConversationStoreSave();
+  scheduleConversationStoreSaveInRuntime(runtime, conversationStoreDeps);
 }
 
 function flushConversationStore() {
-  if (runtime.conversationStoreSaveTimer) {
-    clearTimeout(runtime.conversationStoreSaveTimer);
-    runtime.conversationStoreSaveTimer = null;
-  }
-  void writeConversationStoreNow();
-}
-
-function scheduleConversationStoreSave() {
-  if (runtime.conversationStoreSaveTimer) {
-    return;
-  }
-  runtime.conversationStoreSaveTimer = setTimeout(() => {
-    runtime.conversationStoreSaveTimer = null;
-    void writeConversationStoreNow();
-  }, CONVERSATION_STORE_SAVE_DELAY_MS);
-}
-
-async function writeConversationStoreNow() {
-  ensureConversationStoreLoaded();
-  if (!runtime.conversationStoreLoaded) {
-    return;
-  }
-  try {
-    await saveConversationFileStore({
-      conversations: runtime.conversationsByKey.values(),
-      activeConversationKeyByScope: runtime.activeConversationKeyByScope,
-      conversationsByKey: runtime.conversationsByKey,
-    });
-  } catch (error) {
-    recordDiagnostic(
-      "error",
-      "Failed to save conversation history",
-      formatError(error),
-    );
-  }
+  flushConversationStoreInRuntime(runtime, conversationStoreDeps);
 }
 
 function requestCancel() {
-  if (!runtime.sending) {
-    return;
-  }
-  runtime.cancelRequested = true;
-  if (runtime.cancelActiveRequest) {
-    runtime.cancelActiveRequest();
-  }
+  requestCancelInRuntime(runtime);
 }
 
 function finishActiveRequest(conversationKey: string, requestToken: number) {
@@ -3153,543 +2771,36 @@ function finishActiveRequest(conversationKey: string, requestToken: number) {
 }
 
 function startWorkingState(conversationKey: string) {
-  runtime.workingConversationKey = conversationKey;
+  startWorkingStateInRuntime(runtime, conversationKey);
 }
 
 function clearWorkingState(conversationKey: string) {
-  if (runtime.workingConversationKey === conversationKey) {
-    runtime.workingConversationKey = null;
-  }
+  clearWorkingStateInRuntime(runtime, conversationKey);
 }
 
 function startWaitingAnimation(
   conversationKey: string,
   assistantMessageIndex: number,
 ) {
-  runtime.waitingAssistant = {
+  startWaitingAnimationInRuntime(
+    runtime,
     conversationKey,
-    messageIndex: assistantMessageIndex,
-  };
-  runtime.waitingStartedAt = Date.now();
-  runtime.waitingToken += 1;
+    assistantMessageIndex,
+  );
 }
 
 function stopWaitingAnimation() {
-  const waiting = runtime.waitingAssistant;
-  if (waiting && runtime.waitingStartedAt !== null) {
-    const assistantMessage = getConversationMessage(
-      waiting.conversationKey,
-      waiting.messageIndex,
-    );
-    if (assistantMessage && assistantMessage.responseWaitMs === undefined) {
-      assistantMessage.responseWaitMs = Math.max(
-        0,
-        Date.now() - runtime.waitingStartedAt,
-      );
-      touchConversationByKey(waiting.conversationKey);
-    }
-  }
-  runtime.waitingAssistant = null;
-  runtime.waitingStartedAt = null;
-  runtime.waitingToken += 1;
-}
-
-function renderActivityStatus(
-  doc: Document,
-  conversationKey: string,
-): HTMLElement | null {
-  if (!runtime.sending || runtime.workingConversationKey !== conversationKey) {
-    return null;
-  }
-  const statusInfo = getActivityStatusInfo(conversationKey);
-  if (!statusInfo) {
-    return null;
-  }
-
-  const status = doc.createElement("div");
-  status.className = "za-agent-activity-status";
-  // The row only renders while the request chain is active, so keep the
-  // spinner running even when the latest sub-step says "done" and the model is
-  // still composing a follow-up.
-  status.dataset.kind = "running";
-  if (statusInfo.kind === "failed") {
-    status.dataset.tone = "error";
-  }
-
-  const indicator = doc.createElement("span");
-  indicator.className = "za-agent-activity-indicator";
-  indicator.style.animationDelay = `-${Date.now() % 850}ms`;
-
-  const label = doc.createElement("span");
-  label.className = "za-agent-activity-label";
-  label.textContent = statusInfo.label;
-
-  status.append(indicator, label);
-  return status;
-}
-
-function getActivityStatusInfo(
-  conversationKey: string,
-): { label: string; kind: "running" | "done" | "failed" } | null {
-  const activeEvent = getToolEventByIndex(
-    conversationKey,
-    runtime.activeToolEventByKey.get(conversationKey),
+  stopWaitingAnimationInRuntime(
+    runtime,
+    getConversationMessage,
+    touchConversationByKey,
   );
-  if (activeEvent) {
-    return formatToolEventStatus(activeEvent);
-  }
-  const latestEvent = getToolEventByIndex(
-    conversationKey,
-    runtime.latestToolEventByKey.get(conversationKey),
-  );
-  if (latestEvent) {
-    if (
-      normalizeToolKind(latestEvent.toolType) === "web-search" &&
-      runtime.webSearchStatusMessage
-    ) {
-      return formatWebSearchStatus();
-    }
-    return formatToolEventStatus(latestEvent);
-  }
-  if (runtime.webSearchStatusMessage) {
-    return formatWebSearchStatus();
-  }
-  if (runtime.detectedToolActionByKey.has(conversationKey)) {
-    return {
-      label: formatRunningStatusLabel(getString("agent-tool-detected-label")),
-      kind: "running",
-    };
-  }
-  return {
-    label: formatRunningStatusLabel(getString("agent-working-label")),
-    kind: "running",
-  };
-}
-
-function formatWebSearchStatus(): {
-  label: string;
-  kind: "running" | "done" | "failed";
-} {
-  return {
-    label:
-      runtime.webSearchStatusKind === ""
-        ? formatRunningStatusLabel(runtime.webSearchStatusMessage)
-        : runtime.webSearchStatusMessage,
-    kind:
-      runtime.webSearchStatusKind === "error"
-        ? "failed"
-        : runtime.webSearchStatusKind === "success"
-          ? "done"
-          : "running",
-  };
-}
-
-function getToolEventByIndex(
-  conversationKey: string,
-  messageIndex: number | undefined,
-) {
-  if (typeof messageIndex !== "number") {
-    return null;
-  }
-  const message = getConversationMessage(conversationKey, messageIndex);
-  return message?.kind === "tool-event" ? message.toolEvent || null : null;
-}
-
-function formatToolEventStatus(
-  event: NonNullable<RuntimeMessage["toolEvent"]>,
-) {
-  const toolKind = normalizeToolKind(event.toolType);
-  if (event.status === "running") {
-    return {
-      label: formatRunningStatusLabel(
-        getString(getToolEventLabelID(toolKind, "running")),
-      ),
-      kind: "running" as const,
-    };
-  }
-  if (event.status === "done") {
-    return {
-      label: getString(getToolEventLabelID(toolKind, "done")),
-      kind: "done" as const,
-    };
-  }
-  const base = getString(getToolEventLabelID(toolKind, "failed"));
-  const detail = event.errorMessage
-    ? `: ${truncateInline(event.errorMessage, 120)}`
-    : "";
-  return {
-    label: `${base}${detail}`,
-    kind: "failed" as const,
-  };
-}
-
-function formatRunningStatusLabel(label: string) {
-  return label;
-}
-
-function createMessageMeta(doc: Document, message: RuntimeMessage) {
-  const meta = doc.createElement("div");
-  meta.className = "za-agent-message-meta";
-  const parts = [formatMessageDateTime(message.createdAt)];
-  if (
-    message.role === "assistant" &&
-    typeof message.responseWaitMs === "number" &&
-    Number.isFinite(message.responseWaitMs)
-  ) {
-    parts.push(
-      getString("agent-meta-response-wait", {
-        args: {
-          seconds: formatWaitSeconds(message.responseWaitMs),
-        },
-      }),
-    );
-  }
-  meta.textContent = parts.join(" · ");
-  return meta;
-}
-
-function formatMessageDateTime(timestamp: number) {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date(timestamp));
-  } catch {
-    return new Date(timestamp).toISOString().replace("T", " ").slice(0, 19);
-  }
-}
-
-function formatWaitSeconds(durationMs: number) {
-  const seconds = Math.max(0, durationMs) / 1000;
-  return seconds >= 10 ? seconds.toFixed(0) : seconds.toFixed(1);
 }
 
 function recordDiagnostic(
-  level: DiagnosticEntry["level"],
+  level: Parameters<typeof recordDiagnosticInRuntime>[1],
   message: string,
   detail?: string,
 ) {
-  runtime.diagnostics.push({
-    id: createRuntimeID("diag"),
-    level,
-    createdAt: Date.now(),
-    message,
-    detail,
-  });
-  if (runtime.diagnostics.length > MAX_DIAGNOSTIC_ENTRIES) {
-    runtime.diagnostics = runtime.diagnostics.slice(-MAX_DIAGNOSTIC_ENTRIES);
-  }
-}
-
-function createSessionControls(
-  doc: Document,
-  scopeKey: string,
-  conversation: ConversationState,
-) {
-  const row = doc.createElement("div");
-  row.className = "za-agent-session-row";
-  const allConversations = getConversationsForScope(scopeKey);
-  const conversations = limitConversationOptions(
-    allConversations,
-    conversation.key,
-  );
-
-  const label = doc.createElement("span");
-  label.className = "za-agent-session-label";
-  label.textContent = getString("agent-session-label", {
-    args: {
-      count: String(conversation.messages.length),
-    },
-  });
-
-  const select = doc.createElement("select");
-  select.className = "za-agent-session-select";
-  select.disabled = runtime.sending;
-  select.title = formatConversationOptionLabel(conversation);
-  for (const candidate of conversations) {
-    const option = doc.createElement("option");
-    option.value = candidate.key;
-    const optionLabel = formatConversationOptionLabel(candidate);
-    option.textContent = optionLabel;
-    option.title = optionLabel;
-    select.appendChild(option);
-  }
-  select.value = conversation.key;
-  select.addEventListener("change", () => {
-    if (runtime.sending) {
-      return;
-    }
-    selectConversation(scopeKey, select.value);
-    runtime.shouldAutoScroll = true;
-    void refreshAllSections();
-  });
-
-  const actions = doc.createElement("div");
-  actions.className = "za-agent-session-actions";
-
-  const newButton = doc.createElement("button");
-  newButton.className = "za-agent-secondary-button";
-  newButton.type = "button";
-  newButton.disabled = runtime.sending;
-  newButton.textContent = getString("agent-new-session");
-  newButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      return;
-    }
-    startNewConversation(scopeKey);
-    runtime.shouldAutoScroll = true;
-    void refreshAllSections();
-  });
-
-  const clearButton = doc.createElement("button");
-  clearButton.className = "za-agent-secondary-button";
-  clearButton.type = "button";
-  clearButton.disabled = runtime.sending || !conversation.messages.length;
-  clearButton.textContent = getString("agent-clear-session");
-  clearButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      return;
-    }
-    clearConversationMessages(conversation.key);
-    runtime.shouldAutoScroll = true;
-    void refreshAllSections();
-  });
-
-  const deleteButton = doc.createElement("button");
-  deleteButton.className = "za-agent-secondary-button";
-  deleteButton.type = "button";
-  deleteButton.disabled =
-    runtime.sending ||
-    (!conversation.messages.length && allConversations.length <= 1);
-  deleteButton.textContent = getString("agent-delete-session");
-  deleteButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      return;
-    }
-    deleteConversation(scopeKey, conversation.key);
-    runtime.shouldAutoScroll = true;
-    void refreshAllSections();
-  });
-
-  const exportButton = doc.createElement("button");
-  exportButton.className = "za-agent-secondary-button";
-  exportButton.type = "button";
-  exportButton.disabled = !conversation.messages.length;
-  exportButton.textContent = getString("agent-export-session");
-  exportButton.addEventListener("click", () => {
-    if (!conversation.messages.length) {
-      return;
-    }
-    exportConversationToClipboard(conversation);
-  });
-
-  const renameButton = doc.createElement("button");
-  renameButton.className = "za-agent-secondary-button";
-  renameButton.type = "button";
-  renameButton.disabled = runtime.sending;
-  renameButton.textContent = getString("agent-rename-session");
-  renameButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      return;
-    }
-    renameConversation(doc, conversation);
-    void refreshAllSections();
-  });
-
-  const favoriteButton = doc.createElement("button");
-  favoriteButton.className = "za-agent-secondary-button";
-  favoriteButton.type = "button";
-  favoriteButton.disabled = runtime.sending;
-  favoriteButton.textContent = conversation.favorite
-    ? `★ ${getString("agent-favorite-session")}`
-    : `☆ ${getString("agent-favorite-session")}`;
-  favoriteButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      return;
-    }
-    conversation.favorite = !conversation.favorite;
-    touchConversation(conversation);
-    flushConversationStore();
-    void refreshAllSections();
-  });
-
-  actions.append(
-    newButton,
-    clearButton,
-    deleteButton,
-    exportButton,
-    renameButton,
-    favoriteButton,
-  );
-  row.append(label, select, actions);
-  return row;
-}
-
-function limitConversationOptions(
-  conversations: ConversationState[],
-  activeConversationKey: string,
-) {
-  if (conversations.length <= MAX_VISIBLE_CONVERSATION_OPTIONS) {
-    return conversations;
-  }
-  const visibleConversations = conversations.slice(
-    0,
-    MAX_VISIBLE_CONVERSATION_OPTIONS,
-  );
-  if (
-    visibleConversations.some(
-      (conversation) => conversation.key === activeConversationKey,
-    )
-  ) {
-    return visibleConversations;
-  }
-  const activeConversation = conversations.find(
-    (conversation) => conversation.key === activeConversationKey,
-  );
-  if (!activeConversation) {
-    return visibleConversations;
-  }
-  return [
-    activeConversation,
-    ...visibleConversations.slice(0, MAX_VISIBLE_CONVERSATION_OPTIONS - 1),
-  ];
-}
-
-function formatConversationOptionLabel(conversation: ConversationState) {
-  const prefix = conversation.favorite ? "★ " : "";
-  if (conversation.title) {
-    return `${prefix}${truncateInline(conversation.title, 36)} · ${formatShortDateTime(conversation.updatedAt)}`;
-  }
-  const firstUserMessage = conversation.messages.find(
-    (message) => message.role === "user" && message.content.trim(),
-  );
-  const summary = firstUserMessage
-    ? truncateInline(firstUserMessage.content, 36)
-    : getString("agent-session-untitled");
-  return `${prefix}${summary} · ${formatShortDateTime(conversation.updatedAt)}`;
-}
-
-function exportConversationToClipboard(conversation: ConversationState) {
-  const lines: string[] = [];
-  lines.push(`# Zotero-Cat Conversation Export`);
-  lines.push("");
-  if (conversation.title) {
-    lines.push(`**Title:** ${conversation.title}`);
-  }
-  lines.push(`**Date:** ${new Date(conversation.createdAt).toISOString()}`);
-  lines.push(`**Messages:** ${conversation.messages.length}`);
-  lines.push("");
-  lines.push("---");
-  lines.push("");
-  for (const message of conversation.messages) {
-    const role = message.role === "user" ? "User" : "Assistant";
-    const time = new Date(message.createdAt).toISOString();
-    lines.push(`### ${role} (${time})`);
-    lines.push("");
-    lines.push(message.content);
-    lines.push("");
-  }
-  const text = lines.join("\n");
-  try {
-    const win = Zotero.getMainWindow();
-    if (win?.navigator?.clipboard) {
-      void win.navigator.clipboard.writeText(text);
-    }
-  } catch {
-    // Ignore clipboard errors
-  }
-  showToast(getString("agent-export-copied"));
-}
-
-function renameConversation(doc: Document, conversation: ConversationState) {
-  const currentTitle = conversation.title || "";
-  const newTitle = doc.defaultView?.prompt(
-    getString("agent-rename-prompt"),
-    currentTitle,
-  );
-  if (newTitle === null || newTitle === undefined) {
-    return;
-  }
-  conversation.title = newTitle.trim() || undefined;
-  touchConversation(conversation);
-  flushConversationStore();
-}
-
-function showToast(message: string) {
-  try {
-    const win = Zotero.getMainWindow();
-    if (!win) {
-      return;
-    }
-    const indicator = win.document?.getElementById("zotero-catsync-indicator");
-    if (indicator) {
-      // Use Zotero's built-in status message if available
-    }
-    // Simple fallback: log to console
-    Zotero.log(`[Zotero-Cat] ${message}`);
-  } catch {
-    // Ignore
-  }
-}
-
-function createContextToggle(
-  doc: Document,
-  labelKey:
-    | "agent-web-search-toggle"
-    | "agent-pdf-tools-toggle"
-    | "agent-pdf-tools-auto-apply",
-  checked: boolean,
-  disabled: boolean,
-  onChange: (value: boolean) => void,
-) {
-  const label = doc.createElement("label");
-  label.className = "za-agent-context-toggle";
-  const checkbox = doc.createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.checked = checked;
-  checkbox.disabled = disabled;
-  checkbox.addEventListener("change", () => {
-    onChange(checkbox.checked);
-  });
-  const text = doc.createElement("span");
-  text.textContent = getString(labelKey);
-  label.append(checkbox, text);
-  return label;
-}
-
-function createCopyButton(doc: Document, messageContent: string) {
-  const button = doc.createElement("button");
-  button.className = "za-agent-copy";
-  const defaultLabel = getString("agent-copy-tooltip");
-  button.title = defaultLabel;
-  button.setAttribute("aria-label", defaultLabel);
-  button.addEventListener("click", async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const copied = await copyMessageText(messageContent);
-    if (!copied) {
-      return;
-    }
-    showCopyFeedback(doc, getString("agent-copied-feedback"));
-    button.classList.add("is-copied");
-    const copiedLabel = getString("agent-copied-tooltip");
-    button.title = copiedLabel;
-    button.setAttribute("aria-label", copiedLabel);
-    const view = doc.defaultView;
-    view?.setTimeout(() => {
-      button.classList.remove("is-copied");
-      button.title = defaultLabel;
-      button.setAttribute("aria-label", defaultLabel);
-    }, 900);
-  });
-  return button;
-}
-
-async function copyMessageText(text: string) {
-  return copyTextToClipboard(text);
+  recordDiagnosticInRuntime(runtime, level, message, detail);
 }

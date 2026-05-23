@@ -8,7 +8,7 @@ import {
   extractPages,
   renderPagesAsText,
   type ExtractedPage,
-} from "../tools/pdfReader";
+} from "./pdfReader";
 
 interface RepairOptions {
   alreadyRepaired: boolean;

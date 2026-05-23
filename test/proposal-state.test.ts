@@ -12,12 +12,12 @@ import {
   rejectAllPending,
   setProposalStatus,
   summarizeBatch,
-} from "../src/modules/agent/annotationProposals";
+} from "../src/modules/tools/annotationProposals";
 import {
   annotationRepairTestUtils,
   buildFailedAnnotationRepairPrompt,
   shouldRepairFailedAnnotationBatch,
-} from "../src/modules/agent/annotationRepair";
+} from "../src/modules/tools/annotationRepair";
 
 const SAMPLE = {
   op: "create" as const,

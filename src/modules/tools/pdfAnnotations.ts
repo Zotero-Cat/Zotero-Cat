@@ -1,4 +1,4 @@
-import type { AnnotationResolvedJSON } from "../agent/annotationProposals";
+import type { AnnotationResolvedJSON } from "./annotationProposals";
 
 export interface SaveAnnotationResult {
   success: boolean;

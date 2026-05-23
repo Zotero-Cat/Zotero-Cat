@@ -9,15 +9,15 @@ import {
   registerToolActionHandler,
   type ToolAction,
   type ToolActionHandler,
-} from "./toolAction";
+} from "../agent/toolAction";
 import type { AnnotationProposalInput } from "./annotationProposals";
-import type { ToolJSONSchema } from "./toolProtocol";
+import type { ToolJSONSchema } from "../agent/toolProtocol";
 import {
   extractPages,
   findTextRects,
   renderPagesAsText,
   type ExtractedPage,
-} from "../tools/pdfReader";
+} from "./pdfReader";
 
 const MAX_READ_PDF_CHARS = 8_000;
 const MAX_LIST_ANNOTATION_ENTRIES = 80;

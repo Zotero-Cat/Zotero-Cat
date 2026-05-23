@@ -8,8 +8,8 @@ import { registerWebSearchToolHandler } from "./modules/agent/webSearchContext";
 import {
   registerAnnotationReadTools,
   registerAnnotationWriteStubs,
-} from "./modules/agent/annotationTools";
-import { clearAllBatches } from "./modules/agent/annotationProposals";
+} from "./modules/tools/annotationTools";
+import { clearAllBatches } from "./modules/tools/annotationProposals";
 import { clearPdfReaderCache } from "./modules/tools/pdfReader";
 import { registerPrefsScripts } from "./modules/preferenceScript";
 import { registerPrefsPane } from "./modules/prefsPane";
