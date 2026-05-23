@@ -113,19 +113,13 @@ import {
   setProposalStatus,
   summarizeBatch,
   type AnnotationBatch,
-  type AnnotationProposal,
 } from "../tools/annotationProposals";
 import {
   buildFailedAnnotationRepairPrompt,
   gatherFailedAnnotationPageText,
   shouldRepairFailedAnnotationBatch,
 } from "../tools/annotationRepair";
-import {
-  createAnnotation,
-  deleteAnnotation,
-  updateAnnotation,
-  type SaveAnnotationResult,
-} from "../tools/pdfAnnotations";
+import { applyProposal, resolveAttachmentFor } from "../tools/annotationApply";
 import {
   buildExternalWebSearchContext,
   isWebSearchEnabledPref,
@@ -1419,7 +1413,7 @@ async function applyBatchAndContinue(
       lastApplyError = "Attachment not found.";
       continue;
     }
-    let result: SaveAnnotationResult;
+    let result: Awaited<ReturnType<typeof applyProposal>>;
     try {
       result = await applyProposal(attachment, proposal);
     } catch (error) {
@@ -1615,44 +1609,6 @@ async function requestFailedAnnotationRepair(
     false,
     true,
   );
-}
-
-async function applyProposal(
-  attachment: Zotero.Item,
-  proposal: AnnotationProposal,
-): Promise<SaveAnnotationResult> {
-  if (proposal.op === "create") {
-    return createAnnotation(attachment, proposal.resolved);
-  }
-  if (proposal.op === "update") {
-    if (!proposal.annotationKey) {
-      return { success: false, error: "Missing annotation key." };
-    }
-    return updateAnnotation(attachment, {
-      ...proposal.resolved,
-      key: proposal.annotationKey,
-    });
-  }
-  if (proposal.op === "delete") {
-    if (!proposal.annotationKey) {
-      return { success: false, error: "Missing annotation key." };
-    }
-    return deleteAnnotation(attachment, proposal.annotationKey);
-  }
-  return { success: false, error: "Unknown proposal op." };
-}
-
-function resolveAttachmentFor(
-  proposal: AnnotationProposal,
-  cache: Map<number, Zotero.Item | null>,
-): Zotero.Item | null {
-  if (cache.has(proposal.attachmentID)) {
-    return cache.get(proposal.attachmentID) || null;
-  }
-  const attachment =
-    (Zotero.Items.get(proposal.attachmentID) as Zotero.Item | false) || null;
-  cache.set(proposal.attachmentID, attachment);
-  return attachment;
 }
 
 async function runChatAttempt(

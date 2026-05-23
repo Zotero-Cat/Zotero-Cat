@@ -448,7 +448,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~2230 lines. Extracted 24 modules:
+- **`section.ts`**: 3710 → ~2187 lines. Extracted 25 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
   - `runtime/annotationApprovals.ts` — scoped annotation approval keys, conversation/attachment-scoped always-allow memory, auto-apply decision
   - `runtime/annotationFollowUp.ts` — post-annotation batch follow-up message construction for text-mode and native tool-call turns
@@ -483,6 +483,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `tools/annotationTools.ts` — PDF read/write tool registration and action-to-proposal resolution
   - `tools/annotationProposals.ts` — annotation proposal state machine
   - `tools/annotationRepair.ts` — failed-only annotation batch repair prompt/context helpers
+  - `tools/annotationApply.ts` — proposal-to-Zotero annotation mutation helper and attachment lookup cache helper
 
 - **PDF text matching hardening**: Added regression coverage for hyphenated word line-break artifacts across spans and inside a single span. Matching now normalizes Unicode hyphen variants before line-break rejoin so PDF text such as `set‑` + `tings` can match model text `settings`.
 
@@ -527,7 +528,7 @@ Estimated size: ~500–600 lines to extract.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~2230 lines (down from 3710)
+- `section.ts`: ~2187 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents
