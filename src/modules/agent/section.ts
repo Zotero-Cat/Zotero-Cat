@@ -63,10 +63,7 @@ import {
 import { resolveConversationScopeKey } from "./itemScope";
 import {
   ReasoningEffortValue,
-  buildModelContextMap,
   buildModelEndpointCandidates,
-  buildModelReasoningMap,
-  buildModelSourceKey,
   canRetryModelEndpoint,
   getDefaultModelForProvider,
   normalizeBaseURL,
@@ -74,10 +71,16 @@ import {
   normalizeReasoningEffort,
   normalizeString,
   parseModelInfos,
-  resolveEffectiveReasoningEffort,
   resolveModelOptions,
   summarizeModelMetadataAvailability,
 } from "./modelMetadata";
+import {
+  cacheModelInfos,
+  getReasoningMetadataState,
+  resolveRuntimeModelContextWindow,
+  resolveRuntimeReasoningOptions,
+  syncReasoningEffortPref,
+} from "./modelMetadataRuntime";
 import { getProviderApiKey } from "./secureApiKey";
 import { openAgentPreferences } from "../prefsPane";
 import {
@@ -342,18 +345,11 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
         void refreshAllSections();
         void fetchModelsFromCurrentProvider(providerID, baseURL)
           .then((modelInfos) => {
-            const models = modelInfos.map((modelInfo) => modelInfo.id);
-            runtime.modelOptionsBySource.set(
-              buildModelSourceKey(providerID, baseURL),
-              models,
-            );
-            runtime.modelContextBySource.set(
-              buildModelSourceKey(providerID, baseURL),
-              buildModelContextMap(modelInfos),
-            );
-            runtime.modelReasoningBySource.set(
-              buildModelSourceKey(providerID, baseURL),
-              buildModelReasoningMap(modelInfos),
+            const models = cacheModelInfos(
+              runtime,
+              providerID,
+              baseURL,
+              modelInfos,
             );
             const nextModel = models.includes(currentModel)
               ? currentModel
@@ -2277,10 +2273,7 @@ function resolveModelContextWindow(
   baseURL: string,
   model: string,
 ) {
-  const contextByModel = runtime.modelContextBySource.get(
-    buildModelSourceKey(providerID, baseURL),
-  );
-  return contextByModel?.get(model) || null;
+  return resolveRuntimeModelContextWindow(runtime, providerID, baseURL, model);
 }
 
 function resolveReasoningOptions(
@@ -2288,49 +2281,7 @@ function resolveReasoningOptions(
   baseURL: string,
   model: string,
 ) {
-  const reasoningByModel = runtime.modelReasoningBySource.get(
-    buildModelSourceKey(providerID, baseURL),
-  );
-  const providerOptions = reasoningByModel?.get(model);
-  if (!providerOptions?.length) {
-    return ["default"] as ReasoningEffortValue[];
-  }
-  const options: ReasoningEffortValue[] = ["default"];
-  for (const option of providerOptions) {
-    if (option !== "default" && !options.includes(option)) {
-      options.push(option);
-    }
-  }
-  return options;
-}
-
-function syncReasoningEffortPref(
-  options: ReasoningEffortValue[],
-  requested: ReasoningEffortValue,
-) {
-  const effective = resolveEffectiveReasoningEffort(options, requested);
-  if (effective !== requested) {
-    setPref("openaiReasoningEffort", effective);
-  }
-  return effective;
-}
-
-function hasQueriedModelReasoning(providerID: string, baseURL: string) {
-  return runtime.modelReasoningBySource.has(
-    buildModelSourceKey(providerID, baseURL),
-  );
-}
-
-function hasReasoningMetadata(
-  providerID: string,
-  baseURL: string,
-  model: string,
-) {
-  return Boolean(
-    runtime.modelReasoningBySource
-      .get(buildModelSourceKey(providerID, baseURL))
-      ?.get(model)?.length,
-  );
+  return resolveRuntimeReasoningOptions(runtime, providerID, baseURL, model);
 }
 
 function getReasoningStatusText(
@@ -2338,13 +2289,9 @@ function getReasoningStatusText(
   baseURL: string,
   model: string,
 ) {
-  if (hasReasoningMetadata(providerID, baseURL, model)) {
-    return getReasoningStatusLabel("declared");
-  }
-  if (hasQueriedModelReasoning(providerID, baseURL)) {
-    return getReasoningStatusLabel("queried-undeclared");
-  }
-  return getReasoningStatusLabel("not-queried");
+  return getReasoningStatusLabel(
+    getReasoningMetadataState(runtime, providerID, baseURL, model),
+  );
 }
 
 async function fetchModelsFromCurrentProvider(
