@@ -448,7 +448,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~2187 lines. Extracted 25 modules:
+- **`section.ts`**: 3710 → ~1298 lines. Extracted 26 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
   - `runtime/annotationApprovals.ts` — scoped annotation approval keys, conversation/attachment-scoped always-allow memory, auto-apply decision
   - `runtime/annotationFollowUp.ts` — post-annotation batch follow-up message construction for text-mode and native tool-call turns
@@ -456,6 +456,7 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
   - `runtime/requestState.ts` — `requestCancel`, `startWorkingState`, `clearWorkingState`, `startWaitingAnimation`, `stopWaitingAnimation`
   - `runtime/toolActionContent.ts` — `buildMessageActionKey`, `queueToolActionContent`, `takeToolActionContent`
   - `runtime/conversationMessages.ts` — `appendToolResultMessage`, `appendAssistantContinuation`
+  - `runtime/toolChain.ts` — `ToolChainDeps` interface, `continueAfterAssistantToolAction`, `continueAfterNativeToolCalls`, `applyBatchAndContinue`, `requestMissingToolActionRepair`, `requestFailedAnnotationRepair`, `maybeApplyResolvedBatch`
   - `runtime/conversationStoreService.ts` — `ensureConversationStoreLoaded`, `flushConversationStore`, `scheduleConversationStoreSave`, `writeConversationStoreNow` (uses `ConversationStoreServiceDeps` for DI)
   - `runtime/toolEvents.ts` — `appendToolEventMessage`, `markToolEventDone`, `markToolEventFailed`, `failActiveToolEvent` (uses `ToolEventDeps` for DI)
   - `runtime/userTurn.ts` — user-turn start state, user/assistant message insertion, request-token allocation, initial provider-message projection
@@ -492,35 +493,15 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Pending Tasks
 
-#### Task #5 — Extract orchestration from `section.ts`
-
-Extract the large orchestration functions into a dedicated module. These are the core chat/tool/annotation flows with deep coupling to 25+ local helpers and the `AgentRuntime`:
-
-- `sendChat()` and follow-up request logic
-- `runToolChain()` — tool-action parsing → execute → follow-up loop
-- `applyAnnotationBatch()` — proposal batch → Zotero annotation save → follow-up
-- `repairAnnotationBatch()` — failed-only batch repair follow-up
-- Helper functions: `cancelActiveRequest`, `appendAssistantMessage`, `appendToolResultMessage`, `buildProviderMessages`, `handleStreamProgress`, `handleStreamFinish`
-
-**Challenge**: These functions read and mutate `AgentRuntime` state (messages, pendingToolFollowUp, diagnostics, activeRequestToken) and call back into UI rendering (`renderSectionBody`, `renderMessages`, `scrollToBottom`). The extraction must define a clear orchestration-deps interface that provides:
-
-- State access: `getRuntime()`, `getConversationKey()`, `getScopeKey()`
-- Mutation: `appendMessage()`, `updateMessage()`, `touchConversation()`
-- UI callbacks: `renderMessages()`, `scrollToBottom()`, `showActivityStatus()`
-- Provider: `sendProviderRequest()`
-- Tool execution: `executeToolAction()`
-
-Estimated size: ~1000–1200 lines to extract.
-
 #### Task #6 — Extract `renderSectionBody`
 
 Extract into `agent/ui/sectionBody.ts`:
 
-- `renderSectionBody(doc, root, runtime, ...)` — ~470 lines of DOM coordination
+- `renderSectionBody(doc, root, runtime, ...)` — ~280 lines of DOM coordination
 
 **Challenge**: `renderSectionBody` orchestrates the full DOM tree and wires all event handlers. It currently closes over many `section.ts` locals. The extraction must pass a render-context object with all required callbacks.
 
-Estimated size: ~500–600 lines to extract.
+Estimated size: ~300–400 lines to extract.
 
 ### Current State
 
@@ -528,7 +509,7 @@ Estimated size: ~500–600 lines to extract.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~2187 lines (down from 3710)
+- `section.ts`: ~1298 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents
