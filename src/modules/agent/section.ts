@@ -5,7 +5,7 @@ import {
   buildRequestMessagesWithContext,
   getDefaultContextOptions,
 } from "./context";
-import type { AgentMessage, AssistantToolCall } from "./types";
+import type { AgentMessage } from "./types";
 import { ChatResult, createProviderFromPrefs } from "./provider";
 import {
   buildEndpointKey,
@@ -25,10 +25,7 @@ import {
 } from "./conversationRuntime";
 import { AgentRuntime, createAgentRuntime } from "./runtime/state";
 import { recordDiagnostic as recordDiagnosticInRuntime } from "./runtime/diagnostics";
-import {
-  queueToolActionContent as queueToolActionContentInRuntime,
-  takeToolActionContent as takeToolActionContentInRuntime,
-} from "./runtime/toolActionContent";
+import { queueToolActionContent as queueToolActionContentInRuntime } from "./runtime/toolActionContent";
 import {
   appendAssistantContinuation as appendAssistantContinuationInRuntime,
   appendToolResultMessage as appendToolResultMessageInRuntime,
@@ -37,11 +34,15 @@ import {
   rememberAnnotationOperationApprovals as rememberAnnotationOperationApprovalsInRuntime,
   shouldAutoApplyAnnotationBatch as shouldAutoApplyAnnotationBatchInRuntime,
 } from "./runtime/annotationApprovals";
-import { buildBatchFollowUpMessages } from "./runtime/annotationFollowUp";
+import {
+  continueAfterAssistantToolAction,
+  applyBatchAndContinue as applyBatchAndContinueInToolChain,
+  maybeApplyResolvedBatch as maybeApplyResolvedBatchInToolChain,
+  type ToolChainDeps,
+} from "./runtime/toolChain";
 import {
   clearWorkingState as clearWorkingStateInRuntime,
   requestCancel as requestCancelInRuntime,
-  startWorkingState as startWorkingStateInRuntime,
   stopWaitingAnimation as stopWaitingAnimationInRuntime,
 } from "./runtime/requestState";
 import { beginUserTurn } from "./runtime/userTurn";
@@ -52,10 +53,7 @@ import {
   type ConversationStoreServiceDeps,
 } from "./runtime/conversationStoreService";
 import {
-  appendToolEventMessage as appendToolEventMessageInRuntime,
   failActiveToolEvent as failActiveToolEventInRuntime,
-  markToolEventDone as markToolEventDoneInRuntime,
-  markToolEventFailed as markToolEventFailedInRuntime,
   type ToolEventDeps,
 } from "./runtime/toolEvents";
 import { resolveConversationScopeKey } from "./itemScope";
@@ -79,47 +77,24 @@ import {
   fetchModelsFromCurrentProvider,
   formatModelFetchError,
 } from "./modelListFetch";
-import {
-  buildAnnotationFollowUpPrompt,
-  buildMissingToolActionRepairPrompt,
-  buildToolActionFollowUpPrompt,
-} from "./toolFollowUpPrompts";
 import { openAgentPreferences } from "../prefsPane";
 import {
-  buildToolActionFromNativeCall,
-  parseAssistantToolActions,
-  executeToolAction,
   getOpenAIToolSpecs,
   hasExecutableAssistantToolAction,
-  inferAssistantReadOnlyToolAction,
-  looksLikeAssistantToolIntent,
   splitAssistantToolActionMessage,
-  stripAssistantToolActionMarkup,
-  type ToolAction,
 } from "./toolAction";
 import {
-  isAnnotationWriteAction,
   isPdfToolsAutoApplyPref,
   isPdfToolsEnabledPref,
-  resolveWriteAction,
 } from "../tools/annotationTools";
 import {
   acceptAllPending,
   clearBatch,
-  createBatch,
-  getBatchForConversation,
   hasPendingBatch,
   rejectAllPending,
   setProposalStatus,
-  summarizeBatch,
   type AnnotationBatch,
 } from "../tools/annotationProposals";
-import {
-  buildFailedAnnotationRepairPrompt,
-  gatherFailedAnnotationPageText,
-  shouldRepairFailedAnnotationBatch,
-} from "../tools/annotationRepair";
-import { applyProposal, resolveAttachmentFor } from "../tools/annotationApply";
 import {
   buildExternalWebSearchContext,
   isWebSearchEnabledPref,
@@ -533,6 +508,7 @@ async function sendPreparedMessage(
     return;
   }
   await continueAfterAssistantToolAction(
+    toolChainDeps,
     requestMessages,
     conversationKey,
     assistantMessageIndex,
@@ -601,48 +577,11 @@ async function sendMessage(
   }
 }
 
-const MAX_TOOL_CHAIN_DEPTH = 24;
-
 const toolEventDeps: ToolEventDeps = {
   getConversationMessage,
   touchConversationByKey,
   clearWebSearchStatus,
 };
-
-function appendToolEventMessage(
-  conversationKey: string,
-  toolType: string,
-): number {
-  return appendToolEventMessageInRuntime(
-    runtime,
-    conversationKey,
-    toolType,
-    toolEventDeps,
-  );
-}
-
-function markToolEventDone(conversationKey: string, messageIndex: number) {
-  markToolEventDoneInRuntime(
-    runtime,
-    conversationKey,
-    messageIndex,
-    toolEventDeps,
-  );
-}
-
-function markToolEventFailed(
-  conversationKey: string,
-  messageIndex: number,
-  errorMessage: string,
-) {
-  markToolEventFailedInRuntime(
-    runtime,
-    conversationKey,
-    messageIndex,
-    errorMessage,
-    toolEventDeps,
-  );
-}
 
 function failActiveToolEvent(conversationKey: string, errorMessage: string) {
   failActiveToolEventInRuntime(
@@ -666,13 +605,6 @@ function queueToolActionContent(
   );
 }
 
-function takeToolActionContent(
-  conversationKey: string,
-  messageIndex: number,
-): string {
-  return takeToolActionContentInRuntime(runtime, conversationKey, messageIndex);
-}
-
 function appendToolResultMessage(
   conversationKey: string,
   options: { toolCallId: string; toolName: string; content: string },
@@ -684,607 +616,55 @@ function appendAssistantContinuation(conversationKey: string): number {
   return appendAssistantContinuationInRuntime(runtime, conversationKey);
 }
 
-async function continueAfterAssistantToolAction(
-  requestMessages: AgentMessage[],
+const toolChainDeps: ToolChainDeps = {
+  runtime,
+  toolEventDeps,
+  getConversationMessage: (conversationKey, messageIndex) =>
+    getConversationMessage(conversationKey, messageIndex),
+  touchConversationByKey: (conversationKey) =>
+    touchConversationByKey(conversationKey),
+  refreshAllSections: () => refreshAllSections(),
+  sendMessage: (messages, conversationKey, index, token, effort) =>
+    sendMessage(messages, conversationKey, index, token, effort),
+  streamAssistantReply: (conversationKey, index, content) =>
+    streamAssistantReply(conversationKey, index, content),
+  saveConversationStore: () => saveConversationStore(),
+  appendToolResultMessage: (conversationKey, options) =>
+    appendToolResultMessage(conversationKey, options),
+  appendAssistantContinuation: (conversationKey) =>
+    appendAssistantContinuation(conversationKey),
+  recordDiagnostic: (level, message, detail) =>
+    recordDiagnostic(level, message, detail),
+  applyWebSearchStatus: (status) => applyWebSearchStatus(status),
+  stopWaitingAnimation: () => stopWaitingAnimation(),
+  finishActiveRequest: (conversationKey, token) =>
+    finishActiveRequest(conversationKey, token),
+  shouldAutoApplyAnnotationBatch: (batch) =>
+    shouldAutoApplyAnnotationBatchInRuntime(
+      runtime,
+      batch,
+      isPdfToolsAutoApplyPref(),
+    ),
+  rememberAnnotationOperationApprovals: (batch) =>
+    rememberAnnotationOperationApprovalsInRuntime(runtime, batch),
+  getFirstProposalError: (batch) =>
+    batch.proposals.find((proposal) => proposal.errorMessage)?.errorMessage ||
+    "",
+};
+
+function applyBatchAndContinue(
   conversationKey: string,
-  assistantMessageIndex: number,
-  requestToken: number,
-  reasoningEffort: ReasoningEffortValue,
-  item: Zotero.Item | null,
-  depth: number = 0,
-  repairedMissingToolAction: boolean = false,
-  repairedFailedWriteAction: boolean = false,
+  autoAcceptAll: boolean,
 ) {
-  if (depth >= MAX_TOOL_CHAIN_DEPTH) {
-    runtime.detectedToolActionByKey.delete(conversationKey);
-    const exhaustedMessage = getString("agent-tool-chain-exhausted", {
-      args: { max: String(MAX_TOOL_CHAIN_DEPTH) },
-    });
-    const assistantMessage = getConversationMessage(
-      conversationKey,
-      assistantMessageIndex,
-    );
-    if (assistantMessage) {
-      const prior = assistantMessage.content?.trim();
-      assistantMessage.content = prior
-        ? `${prior}\n\n${exhaustedMessage}`
-        : exhaustedMessage;
-      touchConversationByKey(conversationKey);
-      saveConversationStore();
-    }
-    recordDiagnostic(
-      "warning",
-      exhaustedMessage,
-      `Tool chain depth ${depth} reached (max ${MAX_TOOL_CHAIN_DEPTH}).`,
-    );
-    stopWaitingAnimation();
-    runtime.streamingAssistant = null;
-    await refreshAllSections();
-    return;
-  }
-  const assistantMessage = getConversationMessage(
+  return applyBatchAndContinueInToolChain(
+    toolChainDeps,
     conversationKey,
-    assistantMessageIndex,
-  );
-  if (!assistantMessage) {
-    return;
-  }
-  if (assistantMessage.toolCalls?.length) {
-    await continueAfterNativeToolCalls(
-      requestMessages,
-      conversationKey,
-      assistantMessageIndex,
-      requestToken,
-      reasoningEffort,
-      item,
-      depth,
-    );
-    return;
-  }
-  const queuedToolContent = takeToolActionContent(
-    conversationKey,
-    assistantMessageIndex,
-  );
-  const actionContent = queuedToolContent || assistantMessage.content;
-  const parsedActions = parseAssistantToolActions(actionContent);
-  const inferredAction = parsedActions.length
-    ? null
-    : inferAssistantReadOnlyToolAction(actionContent);
-  const actions = inferredAction ? [inferredAction] : parsedActions;
-  if (!actions.length) {
-    runtime.detectedToolActionByKey.delete(conversationKey);
-    if (
-      !repairedMissingToolAction &&
-      depth < MAX_TOOL_CHAIN_DEPTH - 1 &&
-      looksLikeAssistantToolIntent(actionContent)
-    ) {
-      await requestMissingToolActionRepair(
-        requestMessages,
-        conversationKey,
-        assistantMessageIndex,
-        requestToken,
-        reasoningEffort,
-        item,
-        depth,
-      );
-      return;
-    }
-    // Final natural-language response — nothing more to do.
-    await refreshAllSections();
-    return;
-  }
-  const readActions = actions.filter((action) => action.readOnly);
-  const writeActions = actions.filter((action) => !action.readOnly);
-
-  // Finalize the current assistant bubble before any tool fires: strip the
-  // action JSON so the user sees clean prose, and ensure responseWaitMs is
-  // recorded so the meta line stops growing.
-  if (readActions.length || writeActions.length) {
-    assistantMessage.content = stripToolActionJSON(actionContent);
-    if (
-      assistantMessage.responseWaitMs === undefined &&
-      runtime.waitingStartedAt !== null
-    ) {
-      assistantMessage.responseWaitMs = Math.max(
-        0,
-        Date.now() - runtime.waitingStartedAt,
-      );
-    }
-    touchConversationByKey(conversationKey);
-    saveConversationStore();
-    await refreshAllSections();
-  }
-
-  let readResults = "";
-  if (readActions.length) {
-    const resultPieces: string[] = [];
-    for (const action of readActions) {
-      const eventIndex = appendToolEventMessage(conversationKey, action.type);
-      runtime.detectedToolActionByKey.delete(conversationKey);
-      await refreshAllSections();
-      let externalContext = "";
-      try {
-        externalContext = await executeToolAction(action, {
-          requestToken,
-          item,
-          onStatus: (status) =>
-            applyWebSearchStatus(status as WebSearchRunStatus),
-        });
-      } catch (error) {
-        externalContext = `ERROR: ${formatError(error)}`;
-      }
-      if (requestToken !== runtime.requestToken) {
-        return;
-      }
-      const failed = externalContext.startsWith("ERROR:");
-      if (failed) {
-        markToolEventFailed(
-          conversationKey,
-          eventIndex,
-          externalContext.replace(/^ERROR:\s*/, ""),
-        );
-        recordDiagnostic(
-          "error",
-          getString("agent-tool-failed", {
-            args: { tool: action.type },
-          }),
-          externalContext,
-        );
-      } else {
-        markToolEventDone(conversationKey, eventIndex);
-      }
-      saveConversationStore();
-      await refreshAllSections();
-      resultPieces.push(
-        `[tool:${action.type}]\n${externalContext || "(no output)"}`,
-      );
-    }
-    readResults = resultPieces.join("\n\n");
-  }
-
-  if (requestToken !== runtime.requestToken) {
-    return;
-  }
-  if (runtime.cancelRequested) {
-    await handleChatFailure(
-      new Error("Request aborted"),
-      conversationKey,
-      assistantMessageIndex,
-    );
-    return;
-  }
-
-  if (writeActions.length && (!item || !isPdfToolsEnabledPref())) {
-    const eventIndex = appendToolEventMessage(
-      conversationKey,
-      "propose-annotation",
-    );
-    runtime.detectedToolActionByKey.delete(conversationKey);
-    markToolEventFailed(
-      conversationKey,
-      eventIndex,
-      getString("agent-tool-write-unavailable"),
-    );
-    saveConversationStore();
-    await refreshAllSections();
-  } else if (writeActions.length && item && isPdfToolsEnabledPref()) {
-    const eventIndex = appendToolEventMessage(
-      conversationKey,
-      "propose-annotation",
-    );
-    runtime.detectedToolActionByKey.delete(conversationKey);
-    await refreshAllSections();
-    const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
-    const proposals = [] as Awaited<ReturnType<typeof resolveWriteAction>>;
-    for (const action of writeActions) {
-      if (!isAnnotationWriteAction(action)) {
-        continue;
-      }
-      const resolved = await resolveWriteAction(action, { item, locale });
-      proposals.push(...resolved);
-    }
-    if (proposals.length) {
-      const batch = createBatch(
-        conversationKey,
-        assistantMessageIndex,
-        proposals,
-      );
-      const summary = summarizeBatch(batch);
-      if (summary.pending === 0 && summary.failed > 0) {
-        markToolEventFailed(
-          conversationKey,
-          eventIndex,
-          getFirstProposalError(batch) || "No actionable proposals produced.",
-        );
-      } else {
-        markToolEventDone(conversationKey, eventIndex);
-      }
-      if (summary.pending > 0) {
-        runtime.pendingToolFollowUp.set(conversationKey, {
-          requestMessages,
-          assistantContent: actionContent,
-          assistantMessageIndex,
-          reasoningEffort,
-          item,
-          readResults,
-        });
-      } else {
-        runtime.pendingToolFollowUp.delete(conversationKey);
-      }
-      saveConversationStore();
-      if (
-        shouldRepairFailedAnnotationBatch(batch, {
-          alreadyRepaired: repairedFailedWriteAction,
-          depth,
-          maxDepth: MAX_TOOL_CHAIN_DEPTH,
-        })
-      ) {
-        clearBatch(conversationKey);
-        await requestFailedAnnotationRepair(
-          requestMessages,
-          conversationKey,
-          assistantMessageIndex,
-          requestToken,
-          reasoningEffort,
-          item,
-          depth,
-          batch,
-          readResults,
-          actionContent,
-        );
-        return;
-      }
-      if (shouldAutoApplyAnnotationBatch(batch)) {
-        await applyBatchAndContinue(batch.conversationKey, true);
-      } else {
-        await refreshAllSections();
-      }
-      return;
-    }
-    markToolEventFailed(conversationKey, eventIndex, "No proposals produced.");
-    saveConversationStore();
-    await refreshAllSections();
-  }
-
-  if (!readResults) {
-    // Nothing left to do — either no tools fired successfully, or write tools
-    // were rejected by the gate. The current assistant bubble already shows
-    // the cleaned prose.
-    await refreshAllSections();
-    return;
-  }
-
-  // Read tools produced results; ask the model for the next round in a fresh
-  // assistant bubble so its post-tool prose is a separate message.
-  const continuationIndex = appendAssistantContinuation(conversationKey);
-  await refreshAllSections();
-
-  const primaryReadType = readActions[0]?.type || "tool";
-  const followUpMessages = [
-    ...requestMessages,
-    { role: "assistant", content: actionContent } as AgentMessage,
-    {
-      role: "user",
-      content: buildToolActionFollowUpPrompt(
-        primaryReadType,
-        readResults,
-        primaryReadType !== "web-search" && isPdfToolsEnabledPref(),
-      ),
-    } as AgentMessage,
-  ];
-  await sendMessage(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-  );
-
-  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
-    return;
-  }
-
-  // Recurse to handle any new tool actions the model emits after receiving
-  // the read result (e.g. propose_annotation after read_pdf).
-  await continueAfterAssistantToolAction(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-    item,
-    depth + 1,
-    repairedMissingToolAction,
-    repairedFailedWriteAction,
+    autoAcceptAll,
   );
 }
 
-function stripToolActionJSON(content: string): string {
-  return stripAssistantToolActionMarkup(content);
-}
-
-interface NativeToolExecution {
-  action: ToolAction;
-  toolCall: AssistantToolCall;
-  result: string;
-  failed: boolean;
-}
-
-async function continueAfterNativeToolCalls(
-  requestMessages: AgentMessage[],
-  conversationKey: string,
-  assistantMessageIndex: number,
-  requestToken: number,
-  reasoningEffort: ReasoningEffortValue,
-  item: Zotero.Item | null,
-  depth: number,
-) {
-  const assistantMessage = getConversationMessage(
-    conversationKey,
-    assistantMessageIndex,
-  );
-  const toolCalls = assistantMessage?.toolCalls || [];
-  if (!assistantMessage || !toolCalls.length) {
-    return;
-  }
-  if (
-    assistantMessage.responseWaitMs === undefined &&
-    runtime.waitingStartedAt !== null
-  ) {
-    assistantMessage.responseWaitMs = Math.max(
-      0,
-      Date.now() - runtime.waitingStartedAt,
-    );
-  }
-
-  const reads: NativeToolExecution[] = [];
-  const writes: { action: ToolAction; toolCall: AssistantToolCall }[] = [];
-  const unrecognized: AssistantToolCall[] = [];
-  for (const toolCall of toolCalls) {
-    const action = buildToolActionFromNativeCall(
-      toolCall.name,
-      toolCall.arguments,
-    );
-    if (!action) {
-      unrecognized.push(toolCall);
-      continue;
-    }
-    if (action.readOnly) {
-      reads.push({ action, toolCall, result: "", failed: false });
-    } else {
-      writes.push({ action, toolCall });
-    }
-  }
-  if (!reads.length && !writes.length) {
-    runtime.detectedToolActionByKey.delete(conversationKey);
-    saveConversationStore();
-    await refreshAllSections();
-    return;
-  }
-  runtime.detectedToolActionByKey.delete(conversationKey);
-  await refreshAllSections();
-
-  for (const entry of reads) {
-    const eventIndex = appendToolEventMessage(
-      conversationKey,
-      entry.action.type,
-    );
-    await refreshAllSections();
-    let externalContext = "";
-    try {
-      externalContext = await executeToolAction(entry.action, {
-        requestToken,
-        item,
-        onStatus: (status) =>
-          applyWebSearchStatus(status as WebSearchRunStatus),
-      });
-    } catch (error) {
-      externalContext = `ERROR: ${formatError(error)}`;
-    }
-    if (requestToken !== runtime.requestToken) {
-      return;
-    }
-    entry.failed = externalContext.startsWith("ERROR:");
-    entry.result = externalContext;
-    if (entry.failed) {
-      markToolEventFailed(
-        conversationKey,
-        eventIndex,
-        externalContext.replace(/^ERROR:\s*/, ""),
-      );
-      recordDiagnostic(
-        "error",
-        getString("agent-tool-failed", {
-          args: { tool: entry.action.type },
-        }),
-        externalContext,
-      );
-    } else {
-      markToolEventDone(conversationKey, eventIndex);
-    }
-    // Persist a role:"tool" message paired with the originating tool_call_id
-    // so future turns see a well-formed [assistant{tool_calls}, tool, ...]
-    // sequence. Without this, the next user turn replays the assistant
-    // tool_calls without responses and providers (DeepSeek, etc.) 400 with
-    // "insufficient tool messages following tool_calls message".
-    appendToolResultMessage(conversationKey, {
-      toolCallId: entry.toolCall.id,
-      toolName: entry.toolCall.name,
-      content: entry.result || "(no output)",
-    });
-    saveConversationStore();
-    await refreshAllSections();
-  }
-
-  if (requestToken !== runtime.requestToken) {
-    return;
-  }
-  if (runtime.cancelRequested) {
-    await handleChatFailure(
-      new Error("Request aborted"),
-      conversationKey,
-      assistantMessageIndex,
-    );
-    return;
-  }
-
-  let proposalsCreatedBatch = false;
-  let writeFailedMessage = "";
-  let writeEventIndex = -1;
-  if (writes.length && (!item || !isPdfToolsEnabledPref())) {
-    writeEventIndex = appendToolEventMessage(
-      conversationKey,
-      "propose-annotation",
-    );
-    markToolEventFailed(
-      conversationKey,
-      writeEventIndex,
-      getString("agent-tool-write-unavailable"),
-    );
-    writeFailedMessage = getString("agent-tool-write-unavailable");
-    saveConversationStore();
-    await refreshAllSections();
-  } else if (writes.length && item && isPdfToolsEnabledPref()) {
-    writeEventIndex = appendToolEventMessage(
-      conversationKey,
-      "propose-annotation",
-    );
-    await refreshAllSections();
-    const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
-    const proposals = [] as Awaited<ReturnType<typeof resolveWriteAction>>;
-    for (const { action } of writes) {
-      if (!isAnnotationWriteAction(action)) {
-        continue;
-      }
-      const resolved = await resolveWriteAction(action, { item, locale });
-      proposals.push(...resolved);
-    }
-    if (proposals.length) {
-      const batch = createBatch(
-        conversationKey,
-        assistantMessageIndex,
-        proposals,
-      );
-      const summary = summarizeBatch(batch);
-      if (summary.pending === 0 && summary.failed > 0) {
-        markToolEventFailed(
-          conversationKey,
-          writeEventIndex,
-          getFirstProposalError(batch) || "No actionable proposals produced.",
-        );
-        writeFailedMessage =
-          getFirstProposalError(batch) || "No actionable proposals produced.";
-      } else {
-        markToolEventDone(conversationKey, writeEventIndex);
-      }
-      proposalsCreatedBatch = true;
-      if (summary.pending > 0) {
-        runtime.pendingToolFollowUp.set(conversationKey, {
-          requestMessages,
-          assistantContent: "",
-          assistantMessageIndex,
-          reasoningEffort,
-          item,
-          readResults: "",
-          nativeToolCalls: toolCalls,
-          nativeWriteCalls: writes.map((entry) => entry.toolCall),
-          nativeReadResults: reads.map((entry) => ({
-            toolCall: entry.toolCall,
-            result: entry.result,
-          })),
-        });
-      } else {
-        runtime.pendingToolFollowUp.delete(conversationKey);
-      }
-      saveConversationStore();
-      if (shouldAutoApplyAnnotationBatch(batch)) {
-        await applyBatchAndContinue(batch.conversationKey, true);
-      } else {
-        await refreshAllSections();
-      }
-      return;
-    }
-    markToolEventFailed(
-      conversationKey,
-      writeEventIndex,
-      "No proposals produced.",
-    );
-    writeFailedMessage = "No proposals produced.";
-    saveConversationStore();
-    await refreshAllSections();
-  }
-
-  if (proposalsCreatedBatch) {
-    return;
-  }
-
-  const followUpMessages: AgentMessage[] = [
-    ...requestMessages,
-    assistantMessage,
-  ];
-  for (const entry of reads) {
-    followUpMessages.push({
-      role: "tool",
-      content: entry.result || "(no output)",
-      toolCallId: entry.toolCall.id,
-      toolName: entry.toolCall.name,
-    });
-  }
-  const writeFallbackContent =
-    writeFailedMessage ||
-    "ERROR: Write tool result unavailable (batch not created).";
-  for (const entry of writes) {
-    followUpMessages.push({
-      role: "tool",
-      content: writeFallbackContent,
-      toolCallId: entry.toolCall.id,
-      toolName: entry.toolCall.name,
-    });
-    // Mirror the tool result into conversation history (reads were already
-    // persisted in the loop above). Keeps the [assistant{tool_calls}, tool…]
-    // sequence intact for subsequent user turns.
-    appendToolResultMessage(conversationKey, {
-      toolCallId: entry.toolCall.id,
-      toolName: entry.toolCall.name,
-      content: writeFallbackContent,
-    });
-  }
-  for (const stray of unrecognized) {
-    const strayContent = `ERROR: Unrecognized tool ${stray.name}.`;
-    followUpMessages.push({
-      role: "tool",
-      content: strayContent,
-      toolCallId: stray.id,
-      toolName: stray.name,
-    });
-    appendToolResultMessage(conversationKey, {
-      toolCallId: stray.id,
-      toolName: stray.name,
-      content: strayContent,
-    });
-  }
-
-  const continuationIndex = appendAssistantContinuation(conversationKey);
-  await refreshAllSections();
-  await sendMessage(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-  );
-  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
-    return;
-  }
-  await continueAfterAssistantToolAction(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-    item,
-    depth + 1,
-  );
+function maybeApplyResolvedBatch(conversationKey: string) {
+  return maybeApplyResolvedBatchInToolChain(toolChainDeps, conversationKey);
 }
 
 function getToolCallMode(): "auto" | "native" | "text" {
@@ -1343,272 +723,8 @@ function buildEmptyChatResult(content: string): ChatResult {
   return { content, toolCalls: [], finishReason: "stop" };
 }
 
-function shouldAutoApplyAnnotationBatch(batch: AnnotationBatch): boolean {
-  return shouldAutoApplyAnnotationBatchInRuntime(
-    runtime,
-    batch,
-    isPdfToolsAutoApplyPref(),
-  );
-}
-
 function rememberAnnotationOperationApprovals(batch: AnnotationBatch): void {
   rememberAnnotationOperationApprovalsInRuntime(runtime, batch);
-}
-
-function getFirstProposalError(batch: AnnotationBatch): string {
-  return (
-    batch.proposals.find((proposal) => proposal.errorMessage)?.errorMessage ||
-    ""
-  );
-}
-
-async function maybeApplyResolvedBatch(conversationKey: string): Promise<void> {
-  if (hasPendingBatch(conversationKey)) {
-    await refreshAllSections();
-    return;
-  }
-  await applyBatchAndContinue(conversationKey, false);
-}
-
-async function applyBatchAndContinue(
-  conversationKey: string,
-  autoAcceptAll: boolean,
-) {
-  const batch = getBatchForConversation(conversationKey);
-  if (!batch) {
-    return;
-  }
-  if (autoAcceptAll) {
-    acceptAllPending(conversationKey);
-  }
-  const pending = runtime.pendingToolFollowUp.get(conversationKey);
-  // Tool-event message tracks the apply step itself; runtime.sending may be
-  // false (manual apply triggered from batch UI) so kick the loop manually.
-  const wasSending = runtime.sending;
-  runtime.sending = true;
-  startWorkingState(conversationKey);
-  const eventIndex = appendToolEventMessage(
-    conversationKey,
-    "applying-proposals",
-  );
-  if (!autoAcceptAll) {
-    await refreshAllSections();
-  }
-  const attachmentCache = new Map<number, Zotero.Item | null>();
-  let applyFailures = 0;
-  let lastApplyError = "";
-  for (const proposal of batch.proposals) {
-    if (proposal.status !== "accepted") {
-      continue;
-    }
-    const attachment = resolveAttachmentFor(proposal, attachmentCache);
-    if (!attachment) {
-      setProposalStatus(
-        conversationKey,
-        proposal.id,
-        "failed",
-        "Attachment not found.",
-      );
-      applyFailures += 1;
-      lastApplyError = "Attachment not found.";
-      continue;
-    }
-    let result: Awaited<ReturnType<typeof applyProposal>>;
-    try {
-      result = await applyProposal(attachment, proposal);
-    } catch (error) {
-      result = {
-        success: false,
-        error: formatError(error) || "Apply failed.",
-      };
-    }
-    if (!result.success) {
-      setProposalStatus(
-        conversationKey,
-        proposal.id,
-        "failed",
-        result.error || "Apply failed.",
-      );
-      applyFailures += 1;
-      lastApplyError = result.error || "Apply failed.";
-    }
-  }
-  if (
-    applyFailures > 0 &&
-    batch.proposals.filter((p) => p.status === "accepted").length === 0
-  ) {
-    markToolEventFailed(conversationKey, eventIndex, lastApplyError);
-  } else {
-    markToolEventDone(conversationKey, eventIndex);
-  }
-  saveConversationStore();
-  if (!autoAcceptAll) {
-    await refreshAllSections();
-  }
-  if (!pending) {
-    clearBatch(conversationKey);
-    if (!wasSending) {
-      runtime.sending = false;
-      clearWorkingState(conversationKey);
-    }
-    await refreshAllSections();
-    return;
-  }
-  const summary = summarizeBatch(batch);
-  const followUpPrompt = buildAnnotationFollowUpPrompt(batch, summary);
-  const followUpMessages = buildBatchFollowUpMessages(pending, followUpPrompt);
-  // Mirror the write tool results into conversation history. Reads (if any)
-  // were already persisted by continueAfterNativeToolCalls before the batch
-  // was created; here we only need to close out the write tool_call_ids the
-  // user just accepted/rejected so the [assistant{tool_calls}, tool…]
-  // sequence is intact on subsequent user turns.
-  for (const call of pending.nativeWriteCalls || []) {
-    appendToolResultMessage(conversationKey, {
-      toolCallId: call.id,
-      toolName: call.name,
-      content: followUpPrompt,
-    });
-  }
-  runtime.pendingToolFollowUp.delete(conversationKey);
-  clearBatch(conversationKey);
-  await refreshAllSections();
-  runtime.cancelRequested = false;
-  runtime.requestToken += 1;
-  const requestToken = runtime.requestToken;
-  const continuationIndex = appendAssistantContinuation(conversationKey);
-  try {
-    await sendMessage(
-      followUpMessages,
-      conversationKey,
-      continuationIndex,
-      requestToken,
-      pending.reasoningEffort,
-    );
-    if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
-      return;
-    }
-    await continueAfterAssistantToolAction(
-      followUpMessages,
-      conversationKey,
-      continuationIndex,
-      requestToken,
-      pending.reasoningEffort,
-      pending.item,
-    );
-  } finally {
-    finishActiveRequest(conversationKey, requestToken);
-  }
-}
-
-async function requestMissingToolActionRepair(
-  requestMessages: AgentMessage[],
-  conversationKey: string,
-  assistantMessageIndex: number,
-  requestToken: number,
-  reasoningEffort: ReasoningEffortValue,
-  item: Zotero.Item | null,
-  depth: number,
-): Promise<void> {
-  const assistantMessage = getConversationMessage(
-    conversationKey,
-    assistantMessageIndex,
-  );
-  if (!assistantMessage) {
-    return;
-  }
-  const continuationIndex = appendAssistantContinuation(conversationKey);
-  await refreshAllSections();
-  const followUpMessages = [
-    ...requestMessages,
-    { role: "assistant", content: assistantMessage.content } as AgentMessage,
-    {
-      role: "user",
-      content: buildMissingToolActionRepairPrompt(),
-    } as AgentMessage,
-  ];
-  await sendMessage(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-  );
-  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
-    return;
-  }
-  await continueAfterAssistantToolAction(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-    item,
-    depth + 1,
-    true,
-    false,
-  );
-}
-
-async function requestFailedAnnotationRepair(
-  requestMessages: AgentMessage[],
-  conversationKey: string,
-  assistantMessageIndex: number,
-  requestToken: number,
-  reasoningEffort: ReasoningEffortValue,
-  item: Zotero.Item | null,
-  depth: number,
-  batch: AnnotationBatch,
-  readResults: string,
-  assistantContent: string,
-): Promise<void> {
-  const continuationIndex = appendAssistantContinuation(conversationKey);
-  await refreshAllSections();
-  const locale = (Zotero.locale || "en").startsWith("zh") ? "zh" : "en";
-  // When the model went straight to propose_annotation without calling
-  // read_pdf, readResults is empty and the repair prompt would have nothing
-  // for the model to re-quote against. Auto-fetch the target pages so the
-  // retry can see the actual PDF text.
-  let effectiveReadResults = readResults;
-  if (!effectiveReadResults.trim()) {
-    try {
-      effectiveReadResults = await gatherFailedAnnotationPageText(batch);
-    } catch {
-      // best effort — fall back to the original empty readResults
-    }
-  }
-  const followUpMessages = [
-    ...requestMessages,
-    { role: "assistant", content: assistantContent } as AgentMessage,
-    {
-      role: "user",
-      content: buildFailedAnnotationRepairPrompt(
-        batch,
-        effectiveReadResults,
-        locale,
-      ),
-    } as AgentMessage,
-  ];
-  await sendMessage(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-  );
-  if (requestToken !== runtime.requestToken || runtime.cancelRequested) {
-    return;
-  }
-  await continueAfterAssistantToolAction(
-    followUpMessages,
-    conversationKey,
-    continuationIndex,
-    requestToken,
-    reasoningEffort,
-    item,
-    depth + 1,
-    false,
-    true,
-  );
 }
 
 async function runChatAttempt(
@@ -2159,10 +1275,6 @@ function finishActiveRequest(conversationKey: string, requestToken: number) {
   runtime.requestToken += 1;
   flushConversationStore();
   void refreshAllSections();
-}
-
-function startWorkingState(conversationKey: string) {
-  startWorkingStateInRuntime(runtime, conversationKey);
 }
 
 function clearWorkingState(conversationKey: string) {
