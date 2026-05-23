@@ -151,6 +151,7 @@ import {
 } from "./ui/sectionGates";
 import { renderMessageList } from "./ui/messageList";
 import { createAgentControlPanel } from "./ui/controlPanel";
+import { createAgentComposer } from "./ui/composer";
 
 let registeredSectionID: string | false = false;
 const TYPEWRITER_STEP_CHARS = 3;
@@ -274,9 +275,6 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
       },
     },
   );
-
-  const composer = doc.createElement("div");
-  composer.className = "za-agent-composer";
 
   const providerID = normalizeProviderID(getPref("provider"));
   const baseURL = normalizeString(getPref("openaiBaseUrl"), "");
@@ -407,107 +405,85 @@ function renderSectionBody(body: HTMLDivElement, item: Zotero.Item) {
   );
   const composerLocked = hasPendingBatch(conversationKey);
 
-  const input = doc.createElement("input");
-  input.className = "za-agent-input";
-  input.type = "text";
-  input.placeholder = composerLocked
-    ? getString("agent-proposals-composer-locked")
-    : getString("agent-input-placeholder");
-  input.disabled = runtime.sending || composerLocked;
-
-  const sendButton = doc.createElement("button");
-  sendButton.className = "za-agent-send";
-  sendButton.classList.add(runtime.sending ? "is-stop" : "is-send");
-  sendButton.disabled = composerLocked && !runtime.sending;
-  const buttonLabel = runtime.sending
-    ? getString("agent-stop-tooltip")
-    : getString("agent-send-tooltip");
-  sendButton.title = buttonLabel;
-  sendButton.setAttribute("aria-label", buttonLabel);
-
-  sendButton.addEventListener("click", () => {
-    if (runtime.sending) {
-      requestCancel();
-      return;
-    }
-    const prompt = input.value.trim();
-    if (!prompt) {
-      return;
-    }
-    runtime.sending = true;
-    startWorkingState(conversationKey);
-    runtime.cancelRequested = false;
-    runtime.cancelActiveRequest = null;
-    runtime.requestToken += 1;
-    runtime.webSearchStatusMessage = "";
-    runtime.webSearchStatusKind = "";
-    runtime.latestToolEventByKey.delete(conversationKey);
-    const requestToken = runtime.requestToken;
-    conversation.messages.push({
-      role: "user",
-      content: prompt,
-      createdAt: Date.now(),
-    });
-    touchConversation(conversation);
-    const requestMessages = toProviderMessages(conversation.messages);
-    const templateID = runtime.templateID;
-    const contextOptions = getAutomaticContextOptions();
-    const modelContextWindow = resolveModelContextWindow(
-      providerID,
-      baseURL,
-      currentModel,
-    );
-    const requestReasoningEffort = syncReasoningEffortPref(
-      resolveReasoningOptions(providerID, baseURL, currentModel),
-      normalizeReasoningEffort(getPref("openaiReasoningEffort")),
-    );
-    const assistantMessageIndex =
-      conversation.messages.push({
-        role: "assistant",
-        content: "",
-        createdAt: Date.now(),
-      }) - 1;
-    touchConversation(conversation);
-    saveConversationStore();
-    runtime.shouldAutoScroll = true;
-    runtime.streamingAssistant = null;
-    startWaitingAnimation(conversationKey, assistantMessageIndex);
-    input.value = "";
-    void refreshAllSections();
-    void sendPreparedMessage(
-      {
-        requestMessages,
-        item,
-        contextOptions,
-        templateID,
-        customContext: "",
-        modelContextWindow,
-        prompt,
+  const composer = createAgentComposer(
+    doc,
+    {
+      locked: composerLocked,
+      sending: runtime.sending,
+    },
+    {
+      onStop: requestCancel,
+      onSubmit(prompt) {
+        runtime.sending = true;
+        startWorkingState(conversationKey);
+        runtime.cancelRequested = false;
+        runtime.cancelActiveRequest = null;
+        runtime.requestToken += 1;
+        runtime.webSearchStatusMessage = "";
+        runtime.webSearchStatusKind = "";
+        runtime.latestToolEventByKey.delete(conversationKey);
+        const requestToken = runtime.requestToken;
+        conversation.messages.push({
+          role: "user",
+          content: prompt,
+          createdAt: Date.now(),
+        });
+        touchConversation(conversation);
+        const requestMessages = toProviderMessages(conversation.messages);
+        const templateID = runtime.templateID;
+        const contextOptions = getAutomaticContextOptions();
+        const modelContextWindow = resolveModelContextWindow(
+          providerID,
+          baseURL,
+          currentModel,
+        );
+        const requestReasoningEffort = syncReasoningEffortPref(
+          resolveReasoningOptions(providerID, baseURL, currentModel),
+          normalizeReasoningEffort(getPref("openaiReasoningEffort")),
+        );
+        const assistantMessageIndex =
+          conversation.messages.push({
+            role: "assistant",
+            content: "",
+            createdAt: Date.now(),
+          }) - 1;
+        touchConversation(conversation);
+        saveConversationStore();
+        runtime.shouldAutoScroll = true;
+        runtime.streamingAssistant = null;
+        startWaitingAnimation(conversationKey, assistantMessageIndex);
+        void refreshAllSections();
+        void sendPreparedMessage(
+          {
+            requestMessages,
+            item,
+            contextOptions,
+            templateID,
+            customContext: "",
+            modelContextWindow,
+            prompt,
+          },
+          conversationKey,
+          assistantMessageIndex,
+          requestToken,
+          requestReasoningEffort,
+        )
+          .catch(async (error) => {
+            if (requestToken !== runtime.requestToken) {
+              return;
+            }
+            await handleChatFailure(
+              error,
+              conversationKey,
+              assistantMessageIndex,
+            );
+          })
+          .finally(() => {
+            finishActiveRequest(conversationKey, requestToken);
+          });
       },
-      conversationKey,
-      assistantMessageIndex,
-      requestToken,
-      requestReasoningEffort,
-    )
-      .catch(async (error) => {
-        if (requestToken !== runtime.requestToken) {
-          return;
-        }
-        await handleChatFailure(error, conversationKey, assistantMessageIndex);
-      })
-      .finally(() => {
-        finishActiveRequest(conversationKey, requestToken);
-      });
-  });
-
-  input.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      sendButton.click();
-    }
-  });
-
-  composer.append(input, sendButton);
+    },
+  );
   const rootChildren: HTMLElement[] = [
     createSessionControls(doc, runtime, conversationScopeKey, conversation, {
       getConversationsForScope,
