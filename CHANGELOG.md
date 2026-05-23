@@ -7,6 +7,14 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+### Fixed
+
+- PDF highlight/underline matching now treats model-emitted line-break hyphen
+  spacing such as `fine- tuning` as an alternate for inline PDF compounds such
+  as `fine-tuning`, while preserving the existing dehyphenated line-break path.
+- GLM-style truncated quotes now still fall back when the trailing ellipsis is
+  followed by closing quotes or sentence punctuation.
+
 ## [0.3.0] - 2026-05-23
 
 ### Fixed

@@ -293,6 +293,54 @@ describe("pdf tools logic", function () {
       assert.isNotNull(match);
     });
 
+    it("matches model line-break hyphen spacing against inline PDF compounds", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "We use LoRA for parameter-efficient fine-tuning to reduce computational costs.",
+          x: 0,
+          y: 0,
+          width: 560,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        null,
+        "We use LoRA for parameter-efficient fine- tuning to reduce computational costs.",
+      );
+      assert.isNotNull(match);
+      assert.equal(
+        match?.matchedText,
+        "We use LoRA for parameter-efficient fine-tuning to reduce computational costs.",
+      );
+    });
+
+    it("matches model inline hyphens against PDF line-break compounds", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "This design improves robust-",
+          x: 0,
+          y: 0,
+          width: 220,
+          height: 10,
+        },
+        {
+          text: "ness under heterogeneous clients.",
+          x: 220,
+          y: 0,
+          width: 260,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        0,
+        "This design improves robust-ness under heterogeneous clients.",
+        { strictPage: true },
+      );
+      assert.isNotNull(match);
+    });
+
     it("preserves inline compound hyphens", function () {
       // No whitespace after the hyphen → "anti-pattern" stays as-is.
       const page = makePage(0, 800, [
@@ -381,6 +429,28 @@ describe("pdf tools logic", function () {
         "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate...",
       );
       assert.isNotNull(asciiMatch);
+    });
+
+    it("falls back when a GLM ellipsis is followed by closing punctuation", function () {
+      const page = makePage(0, 800, [
+        {
+          text: "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate weight updates while the base model is frozen.",
+          x: 0,
+          y: 0,
+          width: 600,
+          height: 10,
+        },
+      ]);
+      const match = pdfReaderTestUtils.findTextRects(
+        [page],
+        null,
+        "Low-Rank Adaptation is one of the most popular and widely used fine- tuning methods. LoRA uses two lower-dimensional matrices to approximate…”。",
+      );
+      assert.isNotNull(match);
+      assert.equal(
+        match?.matchedText,
+        "Low-Rank Adaptation is one of the most popular and widely used fine-tuning methods. LoRA uses two lower-dimensional matrices to approximate weight updates while the base model is frozen.",
+      );
     });
 
     it("falls back to the complete sentence before an ellipsis-truncated fragment", function () {

@@ -416,38 +416,54 @@ export function findTextRects(
   query: string,
   options: FindTextRectsOptions = {},
 ): ResolvedRects | null {
-  const normalizedQuery = normalizeQuery(query);
-  if (!normalizedQuery) {
+  const normalizedQueries = buildNormalizedQueryCandidates(query);
+  if (!normalizedQueries.length) {
     return null;
   }
-  const direct = searchPages(pages, targetPageIndex, normalizedQuery, options);
-  if (direct) {
-    return direct;
+  for (const normalizedQuery of normalizedQueries) {
+    const direct = searchPages(
+      pages,
+      targetPageIndex,
+      normalizedQuery,
+      options,
+    );
+    if (direct) {
+      return direct;
+    }
   }
   // Keep exact matching first, but tolerate common orthographic differences
   // between model prose and PDF extraction: "can not" vs "cannot", and
   // dehyphenated line-break compounds such as "intra- cluster" that become
   // "intracluster" in the indexed PDF text while the model writes
   // "intra-cluster".
-  for (const fallback of buildOrthographicFallbackQueries(normalizedQuery)) {
-    const fromOrthography = searchPages(
-      pages,
-      targetPageIndex,
-      fallback,
-      options,
-    );
-    if (fromOrthography) {
-      return fromOrthography;
+  for (const normalizedQuery of normalizedQueries) {
+    for (const fallback of buildOrthographicFallbackQueries(normalizedQuery)) {
+      const fromOrthography = searchPages(
+        pages,
+        targetPageIndex,
+        fallback,
+        options,
+      );
+      if (fromOrthography) {
+        return fromOrthography;
+      }
     }
   }
   // Some models (notably glm-4.5-air) abbreviate quotes with a trailing
   // ellipsis instead of copying the full span. Prefer the last complete
   // sentence before the ellipsis so a half-written next sentence does not make
   // the whole quote unmatchable, then keep the older prefix retry as fallback.
-  for (const fallback of buildEllipsisFallbackQueries(normalizedQuery)) {
-    const fromEllipsis = searchPages(pages, targetPageIndex, fallback, options);
-    if (fromEllipsis) {
-      return fromEllipsis;
+  for (const normalizedQuery of normalizedQueries) {
+    for (const fallback of buildEllipsisFallbackQueries(normalizedQuery)) {
+      const fromEllipsis = searchPages(
+        pages,
+        targetPageIndex,
+        fallback,
+        options,
+      );
+      if (fromEllipsis) {
+        return fromEllipsis;
+      }
     }
   }
   // The error UI truncates long quoted text with an ellipsis, but the actual
@@ -455,12 +471,19 @@ export function findTextRects(
   // ellipsis. If the whole quote fails, try complete sentence-sized spans
   // before giving up. This keeps the annotation grounded in verbatim PDF text
   // while avoiding failures caused by one non-verbatim trailing sentence.
-  for (const fallback of buildCompleteSentenceFallbackQueries(
-    normalizedQuery,
-  )) {
-    const fromSentence = searchPages(pages, targetPageIndex, fallback, options);
-    if (fromSentence) {
-      return fromSentence;
+  for (const normalizedQuery of normalizedQueries) {
+    for (const fallback of buildCompleteSentenceFallbackQueries(
+      normalizedQuery,
+    )) {
+      const fromSentence = searchPages(
+        pages,
+        targetPageIndex,
+        fallback,
+        options,
+      );
+      if (fromSentence) {
+        return fromSentence;
+      }
     }
   }
   // Last resort: models sometimes splice short verbatim phrases together with
@@ -478,10 +501,12 @@ export function findTextRects(
   const candidateOrder = options.strictPage
     ? pages.filter((page) => page.pageIndex === targetPageIndex)
     : buildSearchOrder(pages, targetPageIndex);
-  for (const page of candidateOrder) {
-    const match = matchPageByLongestCommonSubstring(page, normalizedQuery);
-    if (match) {
-      return match;
+  for (const normalizedQuery of normalizedQueries) {
+    for (const page of candidateOrder) {
+      const match = matchPageByLongestCommonSubstring(page, normalizedQuery);
+      if (match) {
+        return match;
+      }
     }
   }
   return null;
@@ -659,10 +684,14 @@ function buildOrthographicFallbackQueries(normalized: string): string[] {
 }
 
 function getPrefixBeforeTrailingEllipsis(normalized: string): string | null {
-  if (!/\.{3,}$/.test(normalized)) {
+  if (
+    !/\.{3,}\s*["')\]}»”’」』】））》]*\s*[.!?。！？]*\s*$/.test(normalized)
+  ) {
     return null;
   }
-  const trimmed = normalized.replace(/\s*\.{3,}\s*$/u, "").trimEnd();
+  const trimmed = normalized
+    .replace(/\s*\.{3,}\s*["')\]}»”’」』】））》]*\s*[.!?。！？]*\s*$/u, "")
+    .trimEnd();
   if (!trimmed || trimmed === normalized) {
     return null;
   }
@@ -847,6 +876,21 @@ function buildNormalizedIndex(spans: ExtractedTextSpan[]): {
 
 function normalizeQuery(query: string): string {
   return normalizeForMatching(query);
+}
+
+function buildNormalizedQueryCandidates(query: string): string[] {
+  const normalized = normalizeQuery(query);
+  if (!normalized) {
+    return [];
+  }
+  return dedupeStrings([
+    normalized,
+    normalizeForMatching(preserveSpacedHyphenCompounds(query)),
+  ]).filter(Boolean);
+}
+
+function preserveSpacedHyphenCompounds(text: string): string {
+  return text.replace(/([\p{L}\p{N}])[‐‑‒–—−-]\s+([\p{L}\p{N}])/gu, "$1-$2");
 }
 
 // PDF.js often emits Latin ligatures and soft hyphens straight from the

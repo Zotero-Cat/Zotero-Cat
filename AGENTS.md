@@ -488,10 +488,10 @@ A systematic refactoring pass reduced coupling in `section.ts` and `provider.ts`
   - `tools/annotationRepair.ts` — failed-only annotation batch repair prompt/context helpers
   - `tools/annotationApply.ts` — proposal-to-Zotero annotation mutation helper and attachment lookup cache helper
 
-- **PDF text matching hardening**: Added regression coverage for hyphenated word line-break artifacts across spans and inside a single span. Matching now normalizes Unicode hyphen variants before line-break rejoin so PDF text such as `set‑` + `tings` can match model text `settings`.
+- **PDF text matching hardening**: Added regression coverage for hyphenated word line-break artifacts across spans and inside a single span. Matching now normalizes Unicode hyphen variants before line-break rejoin so PDF text such as `set‑` + `tings` can match model text `settings`. Post-`v0.3.0`, query matching also keeps a spaced-hyphen candidate so model text like `fine- tuning` can match inline PDF text `fine-tuning`, and GLM-style trailing ellipses still fall back when followed by closing quotes or sentence punctuation.
 
 - All extraction uses explicit dependency injection (handler/deps interfaces), no runtime singleton coupling.
-- Lint, build, and all 161 tests pass.
+- Lint, build, and all 164 tests pass.
 
 ### Pending Tasks
 
@@ -502,7 +502,7 @@ No remaining refactoring tasks from the current phase.
 - Branch: `main`
 - Lint: clean
 - Build: passes
-- Tests: 161 pass, 0 fail
+- Tests: 164 pass, 0 fail
 - `section.ts`: ~935 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
