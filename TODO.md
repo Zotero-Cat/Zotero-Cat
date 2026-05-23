@@ -17,10 +17,10 @@ workflow.
 - License: `AGPL-3.0-or-later`
 - Runtime for development: Node.js 24 LTS
 - Current implementation target: Zotero 9
-- Released: `v0.3.0` (item-pane chat, OpenAI-compatible provider, Zotero
+- Released: `v0.3.1` (item-pane chat, OpenAI-compatible provider, Zotero
   context, streaming, history, optional web search, and experimental PDF tool
   agency behind the `PDF tools` toggle, with hardened tool-call orchestration
-  and PDF text matching)
+  and patched PDF quote matching for GLM-style ellipses and hyphen spacing)
 
 ## Phase 0: Repository Initialization
 

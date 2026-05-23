@@ -103,8 +103,8 @@ git status --short
 After the relevant gates pass, create and push the release tag. For example:
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 Do not tag a release while the relevant manual Zotero installation,

@@ -85,8 +85,8 @@ git status --short
 相关门禁通过后，创建并推送 release 标签。例如：
 
 ```bash
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 当前 release 相关的人工 Zotero 安装、持久化或兼容性检查未完成时，不要创建 release tag。

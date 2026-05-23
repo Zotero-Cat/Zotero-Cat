@@ -7,6 +7,8 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-23
+
 ### Fixed
 
 - PDF highlight/underline matching now treats model-emitted line-break hyphen

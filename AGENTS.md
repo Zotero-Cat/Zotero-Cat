@@ -24,7 +24,7 @@ Zotero-Cat is a Zotero item-pane assistant. It uses Zotero's official `ItemPaneM
 
 The current implementation covers MVP, Zotero context injection, streaming chat UX, per-item history, persistence, internal diagnostics, Phase 3.5 engineering quality, repository-side Phase 4 release preparation, optional web search tooling, tool-action orchestration, session export/rename/favorite controls, and experimental PDF tool agency. PDF tool agency currently includes `read_pdf`, `list_annotations`, annotation proposal generation, Accept / Reject / Accept All / Reject All review cards, optional auto-apply, and Zotero annotation create/update/delete wrappers. Structure work moved model metadata parsing, conversation persistence, item scoping, retry classification, shared message types, web search logic, tool-action parsing, PDF text extraction, annotation persistence, and proposal state out of the item-pane UI file. Release docs, changelog, provider setup notes, privacy notes, and the direct GitHub release workflow are present. Public Markdown intended for users has English and Chinese versions; `README.md` remains the English GitHub homepage and links to `README.zh-CN.md`.
 
-The current public release is `v0.3.0`. It hardens tool-call orchestration, PDF text matching, native `tool_calls` history, and long-running activity feedback while keeping experimental PDF tools behind the `PDF tools` toggle. The public release asset is `zotero-cat-v0.3.0.xpi` under the version tag. The special GitHub release tag named `release` is used only for updater manifests and should remain marked as pre-release and not Latest. Zotero 10 beta compatibility is still not declared; keep `strict_max_version` at `9.*` until the current Zotero beta line passes the manual checklist.
+The current public release is `v0.3.1`. It patches PDF quote matching for GLM-style trailing ellipses and model-emitted line-break hyphen spacing while keeping the `v0.3.0` tool-call hardening work intact. The public release asset is `zotero-cat-v0.3.1.xpi` under the version tag. The special GitHub release tag named `release` is used only for updater manifests and should remain marked as pre-release and not Latest. Zotero 10 beta compatibility is still not declared; keep `strict_max_version` at `9.*` until the current Zotero beta line passes the manual checklist.
 
 ## Development Environment
 
@@ -300,7 +300,7 @@ Storage behavior:
 ## Current Limitations
 
 - Web search currently uses search snippets only; it does not crawl full webpages.
-- PDF tools are experimental in `v0.3.0`, off by default, and still need continued Zotero UI regression on real PDFs.
+- PDF tools are experimental in `v0.3.1`, off by default, and still need continued Zotero UI regression on real PDFs.
 - PDF highlight placement depends on extractable text and matching rects; scanned, encrypted, or OCR-poor PDFs can fail.
 - The no-API-key onboarding gate has localized strings, but the gate is not wired as the only first-run UI yet.
 - Proposal keyboard shortcuts are still pending.
@@ -427,7 +427,7 @@ Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` p
 
 ## Next Phase
 
-The next milestone is post-`0.3.0` PDF-tool hardening and Zotero UI regression on real PDFs.
+The next milestone is post-`0.3.1` PDF-tool hardening and Zotero UI regression on real PDFs.
 
 Recommended order:
 

@@ -16,9 +16,10 @@
 - License：`AGPL-3.0-or-later`
 - 开发运行时：Node.js 24 LTS
 - 当前实现目标：Zotero 9
-- 已发布版本：`v0.3.0`(item-pane 聊天、OpenAI-compatible provider、Zotero
+- 已发布版本：`v0.3.1`(item-pane 聊天、OpenAI-compatible provider、Zotero
   上下文、流式输出、历史会话、可选联网搜索，以及由 `PDF 工具` 开关控制的实验性
-  PDF 工具代理，并强化了工具调用编排和 PDF 文本匹配)
+  PDF 工具代理，并强化了工具调用编排，修复 GLM 省略号和断行连字符空格的
+  PDF 引文匹配)
 
 ## Phase 0: 仓库初始化
 

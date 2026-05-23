@@ -1,7 +1,7 @@
 {
   "name": "zotero-cat",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "An item-pane Cat agent plugin for Zotero with pluggable model providers.",
   "config": {
     "addonName": "Zotero-Cat",
