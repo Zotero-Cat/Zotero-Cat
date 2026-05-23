@@ -1,5 +1,4 @@
 import { getLocaleID, getString } from "../../utils/locale";
-import { getPref } from "../../utils/prefs";
 import {
   AgentContextOptions,
   buildRequestMessagesWithContext,
@@ -7,11 +6,13 @@ import {
 } from "./context";
 import type { AgentMessage } from "./types";
 import { ChatResult, createProviderFromPrefs } from "./provider";
-import {
-  buildEndpointKey,
-  isNativeToolsUnsupported,
-} from "./functionCalling/quirks";
 import { runAssistantTurn } from "./functionCalling/runner";
+import {
+  getActiveBaseURL,
+  getActiveEndpointKey,
+  buildNativeToolSpecs,
+  shouldUseNativeToolCalls,
+} from "./functionCalling/config";
 import { shouldRetryChatError, isAbortError } from "./chatRetry";
 import {
   clearConversationMessages as clearConversationMessagesInRuntime,
@@ -61,7 +62,6 @@ import {
   resolveRuntimeModelContextWindow,
 } from "./modelMetadataRuntime";
 import {
-  getOpenAIToolSpecs,
   hasExecutableAssistantToolAction,
   splitAssistantToolActionMessage,
 } from "./toolAction";
@@ -366,58 +366,6 @@ function applyBatchAndContinue(
 
 function maybeApplyResolvedBatch(conversationKey: string) {
   return maybeApplyResolvedBatchInToolChain(toolChainDeps, conversationKey);
-}
-
-function getToolCallMode(): "auto" | "native" | "text" {
-  const raw = String(getPref("toolCallMode") || "")
-    .trim()
-    .toLowerCase();
-  if (raw === "native" || raw === "text") {
-    return raw;
-  }
-  return "auto";
-}
-
-function getActiveBaseURL(): string {
-  return String(getPref("openaiBaseUrl") || "").trim();
-}
-
-function getActiveEndpointKey(): string {
-  const provider = String(getPref("provider") || "");
-  return buildEndpointKey(provider, getActiveBaseURL());
-}
-
-function shouldUseNativeToolCalls(): boolean {
-  if (!isPdfToolsEnabledPref()) {
-    return false;
-  }
-  const mode = getToolCallMode();
-  if (mode === "text") {
-    return false;
-  }
-  if (mode === "auto" && isNativeToolsUnsupported(getActiveEndpointKey())) {
-    return false;
-  }
-  return true;
-}
-
-function buildNativeToolSpecs() {
-  const allowed = new Set<string>();
-  if (isPdfToolsEnabledPref()) {
-    for (const name of [
-      "read_pdf",
-      "list_annotations",
-      "propose_annotation",
-      "modify_annotation",
-      "delete_annotation",
-    ]) {
-      allowed.add(name);
-    }
-  }
-  if (!allowed.size) {
-    return [];
-  }
-  return getOpenAIToolSpecs().filter((spec) => allowed.has(spec.function.name));
 }
 
 function buildEmptyChatResult(content: string): ChatResult {
