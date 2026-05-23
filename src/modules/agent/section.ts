@@ -18,7 +18,6 @@ import {
   createNewConversationForScope,
   deleteConversation as deleteConversationInRuntime,
   getActiveConversationForScope as getActiveConversationForScopeInRuntime,
-  getConversationForKey as getConversationForKeyInRuntime,
   getConversationMessage as getConversationMessageInRuntime,
   getConversationsForScope as getConversationsForScopeInRuntime,
   selectConversation as selectConversationInRuntime,
@@ -35,9 +34,12 @@ import {
   takeToolActionContent as takeToolActionContentInRuntime,
 } from "./runtime/toolActionContent";
 import {
+  appendAssistantContinuation as appendAssistantContinuationInRuntime,
+  appendToolResultMessage as appendToolResultMessageInRuntime,
+} from "./runtime/conversationMessages";
+import {
   clearWorkingState as clearWorkingStateInRuntime,
   requestCancel as requestCancelInRuntime,
-  startWaitingAnimation as startWaitingAnimationInRuntime,
   startWorkingState as startWorkingStateInRuntime,
   stopWaitingAnimation as stopWaitingAnimationInRuntime,
 } from "./runtime/requestState";
@@ -676,40 +678,11 @@ function appendToolResultMessage(
   conversationKey: string,
   options: { toolCallId: string; toolName: string; content: string },
 ): number {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation) {
-    return -1;
-  }
-  const index =
-    conversation.messages.push({
-      role: "tool",
-      content: options.content,
-      toolCallId: options.toolCallId,
-      toolName: options.toolName,
-      createdAt: Date.now(),
-    }) - 1;
-  touchConversationByKey(conversationKey);
-  return index;
+  return appendToolResultMessageInRuntime(runtime, conversationKey, options);
 }
 
 function appendAssistantContinuation(conversationKey: string): number {
-  const conversation = getConversationForKey(conversationKey);
-  if (!conversation) {
-    return -1;
-  }
-  const index =
-    conversation.messages.push({
-      role: "assistant",
-      content: "",
-      createdAt: Date.now(),
-    }) - 1;
-  touchConversationByKey(conversationKey);
-  runtime.streamingAssistant = null;
-  if (runtime.sending) {
-    startWorkingState(conversationKey);
-  }
-  startWaitingAnimation(conversationKey, index);
-  return index;
+  return appendAssistantContinuationInRuntime(runtime, conversationKey);
 }
 
 async function continueAfterAssistantToolAction(
@@ -2313,11 +2286,6 @@ function getActiveConversationForScope(scopeKey: string) {
   return getActiveConversationForScopeInRuntime(runtime, scopeKey);
 }
 
-function getConversationForKey(conversationKey: string) {
-  ensureConversationStoreLoaded();
-  return getConversationForKeyInRuntime(runtime, conversationKey);
-}
-
 function getConversationsForScope(scopeKey: string) {
   ensureConversationStoreLoaded();
   return getConversationsForScopeInRuntime(runtime, scopeKey);
@@ -2417,17 +2385,6 @@ function startWorkingState(conversationKey: string) {
 
 function clearWorkingState(conversationKey: string) {
   clearWorkingStateInRuntime(runtime, conversationKey);
-}
-
-function startWaitingAnimation(
-  conversationKey: string,
-  assistantMessageIndex: number,
-) {
-  startWaitingAnimationInRuntime(
-    runtime,
-    conversationKey,
-    assistantMessageIndex,
-  );
 }
 
 function stopWaitingAnimation() {

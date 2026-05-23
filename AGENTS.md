@@ -448,11 +448,12 @@ A systematic refactoring pass is in progress to reduce coupling in `section.ts` 
 
 ### Completed
 
-- **`section.ts`**: 3710 → ~2449 lines. Extracted 20 modules:
+- **`section.ts`**: 3710 → ~2404 lines. Extracted 21 modules:
   - `runtime/state.ts` — `AgentRuntime`, `DiagnosticEntry`, `PendingToolFollowUp`, `createAgentRuntime()`
   - `runtime/diagnostics.ts` — `recordDiagnostic()`
   - `runtime/requestState.ts` — `requestCancel`, `startWorkingState`, `clearWorkingState`, `startWaitingAnimation`, `stopWaitingAnimation`
   - `runtime/toolActionContent.ts` — `buildMessageActionKey`, `queueToolActionContent`, `takeToolActionContent`
+  - `runtime/conversationMessages.ts` — `appendToolResultMessage`, `appendAssistantContinuation`
   - `runtime/conversationStoreService.ts` — `ensureConversationStoreLoaded`, `flushConversationStore`, `scheduleConversationStoreSave`, `writeConversationStoreNow` (uses `ConversationStoreServiceDeps` for DI)
   - `runtime/toolEvents.ts` — `appendToolEventMessage`, `markToolEventDone`, `markToolEventFailed`, `failActiveToolEvent` (uses `ToolEventDeps` for DI)
   - `runtime/userTurn.ts` — user-turn start state, user/assistant message insertion, request-token allocation, initial provider-message projection
@@ -523,7 +524,7 @@ Estimated size: ~500–600 lines to extract.
 - Lint: clean
 - Build: passes
 - Tests: 161 pass, 0 fail
-- `section.ts`: ~2449 lines (down from 3710)
+- `section.ts`: ~2404 lines (down from 3710)
 - `provider.ts`: ~803 lines (down from 1356)
 
 ## Editing Notes For Future Agents
