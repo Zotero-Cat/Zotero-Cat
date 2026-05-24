@@ -7,6 +7,14 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+### Fixed
+
+- GitHub Release notes now use absolute bilingual links so the Chinese release
+  note link no longer resolves under `/releases/tag/...` and returns 404.
+- The release workflow now applies `doc/release-notes/<version>.md` to the
+  GitHub Release body after publishing, avoiding auto-generated placeholder
+  notes.
+
 ## [0.3.1] - 2026-05-23
 
 ### Fixed

@@ -69,6 +69,7 @@ Release workflow 位于 `.github/workflows/release.yml`。
 
 - 手动 `workflow_dispatch` 会运行 lint、build、tests，并上传 release candidate artifact。它不会发布 GitHub Release。
 - 推送 `v*` 标签会运行同样检查，上传 artifact，然后执行 `npm run release` 发布 GitHub Release 并更新 manifest assets。
+- `npm run release` 后，workflow 会在存在对应文件时把 `doc/release-notes/<version>.md` 写入 GitHub Release 正文。Release notes 里的中英文切换链接要使用 GitHub 绝对 URL，因为 Release 页面中的相对链接会被解析到 `/releases/tag/...` 下。
 - 发布完成后，workflow 会对特殊 `release` tag 执行 `--prerelease --latest=false`，避免内部 manifest release 抢占公开页面上的 Latest。
 
 每次公开 release 复用同一套检查：

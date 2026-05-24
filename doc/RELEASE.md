@@ -85,6 +85,10 @@ The release workflow lives at `.github/workflows/release.yml`.
   candidate artifact. It does not publish a GitHub Release.
 - Pushing a `v*` tag runs the same checks, uploads the artifact, then runs
   `npm run release` to publish the GitHub Release and update manifest assets.
+- After `npm run release`, the workflow applies
+  `doc/release-notes/<version>.md` to the GitHub Release body when that file
+  exists. Keep language-switch links in release notes as absolute GitHub URLs,
+  because relative links in a Release page resolve under `/releases/tag/...`.
 - After publishing, the workflow marks the special `release` tag as
   `--prerelease --latest=false` so the public package release remains the
   visible release.

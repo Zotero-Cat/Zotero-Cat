@@ -6,6 +6,11 @@
 
 ## [Unreleased]
 
+### 修复
+
+- GitHub Release notes 现在使用绝对中英文链接，中文版 release note 链接不会再被解析到 `/releases/tag/...` 下并返回 404。
+- Release workflow 现在会在发布后把 `doc/release-notes/<version>.md` 写入 GitHub Release 正文，避免出现自动生成的占位说明。
+
 ## [0.3.1] - 2026-05-23
 
 ### 修复

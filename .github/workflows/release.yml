@@ -50,6 +50,17 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: npm run release
 
+      - name: Apply release notes
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="doc/release-notes/${VERSION}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$NOTES_FILE"
+          fi
+
       - name: Keep update manifest release internal
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:

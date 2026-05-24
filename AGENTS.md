@@ -369,7 +369,8 @@ Workflow file: `.github/workflows/release.yml`.
 Release workflow behavior:
 
 - Manual `workflow_dispatch` runs lint, build, tests, and uploads `.scaffold/build` as a release-candidate artifact. It does not publish a GitHub Release.
-- Pushing a `v*` tag runs the same checks, uploads the artifact, then runs `npm run release`.
+- Pushing a `v*` tag runs the same checks, uploads the artifact, runs `npm run release`, then applies `doc/release-notes/<version>.md` to the GitHub Release body if the file exists.
+- Release-note language switch links should use absolute GitHub URLs. Relative links such as `./0.3.1.zh-CN.md` resolve under `/releases/tag/...` on GitHub Release pages and produce 404s.
 - Release tags use `v0.x.y`; pre-release tags use `v0.x.y-alpha`, `v0.x.y-beta.n`, or another SemVer pre-release suffix.
 - The scaffold-managed updater assets are published to the special GitHub release tag named `release`.
 
