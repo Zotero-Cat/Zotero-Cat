@@ -2,246 +2,115 @@
 
 [English](./README.md) | [中文](./README.zh-CN.md)
 
+Zotero-Cat adds an AI assistant to Zotero's item pane. You can use it to ask
+about a paper, summarize notes, discuss selected PDF text, search the web when
+you allow it, and prepare PDF annotation proposals before Zotero writes them.
+
+Zotero-Cat is independent from Zotero and is not affiliated with Zotero or
+Digital Scholar.
+
 ## Quick Start
 
-Download the current release from
-[GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.3.1),
-or download
-[`zotero-cat-v0.3.1.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.3.1/zotero-cat-v0.3.1.xpi)
-directly. In Zotero, install it from `Tools -> Plugins`.
-
-Zotero-Cat is a Zotero item-pane assistant for reading, summarizing, reviewing, and discussing research items with user-selected model providers. It follows the interaction style of Codex in VS Code, but keeps the provider configurable so users can use OpenAI-compatible gateways, local services, or self-hosted model endpoints.
-
-The name comes from a cat downstairs in the dorm that was looking for something, and from the Linux `cat` command that reads content out loud enough for a pipeline to use.
-
-Zotero-Cat is an independent open-source project and is not affiliated with Zotero.
-
-## Current Status
-
-The current release is `v0.3.1`. It patches PDF quote matching for GLM-style
-trailing ellipses and model-emitted line-break hyphen spacing while keeping the
-`v0.3.0` tool-call hardening work intact.
-
-The plugin currently runs as a Zotero item-pane section through `ItemPaneManager.registerSection`. It does not replace Zotero's native right sidebar.
-
-## PDF Tool Agency
-
-PDF tools remain experimental and off by default. Current PDF tool work
-includes:
-
-- `read_pdf` and `list_annotations` tool actions.
-- `propose_annotation`, `modify_annotation`, and `delete_annotation` actions
-  converted into reviewable proposal cards.
-- Accept / Reject / Accept All / Reject All controls before Zotero annotations
-  are saved.
-- `pdfjs-dist` PDF text extraction with Zotero indexed-text fallback.
-- Page-local text matching for highlights and repair prompts that ask the model
-  to split cross-page highlights into separate proposals.
-- Zotero annotation create/update/delete wrappers and proposal-state tests.
-
-## Implemented Features
-
-- Zotero right-pane `Zotero-Cat` section with icon and localized labels.
-- Fixed-height chat panel with bottom input composer.
-- Streaming-first assistant output with incremental rendering.
-- Send button that switches to a stop button during active requests.
-- `Thinking.` / `Thinking..` / `Thinking...` waiting animation.
-- Response wait time shown in assistant message metadata.
-- Markdown rendering for assistant messages.
-- Message selection and copy button with visible copy feedback.
-- Provider settings page with Provider, Base URL, API Key, Save, and Test Connection.
-- API Key storage through Firefox Login Manager, not plain Zotero prefs.
-- OpenAI-compatible request support for `responses` and `chat.completions` endpoints.
-- Endpoint probing, stream-first fallback, and successful endpoint path memory.
-- Model list fetching from provider `/models` endpoint.
-- Model selection, custom model input, and provider-declared reasoning effort selection.
-- Zotero context injection for metadata, notes, annotations, and selected PDF text.
-- Optional web search context injection with DuckDuckGo, DuckDuckGo HTML fallback, or a user-configured SearXNG JSON endpoint.
-- Tool-action parsing for model-emitted web-search JSON, with Zotero-Cat executing the tool only when the user-enabled Web Search toggle is on.
-- Read-only context preview with token budget estimate and model context window hint.
-- Folded custom context input for user-supplied context per item, persisted locally per item.
-- Per-item conversation history with native dropdown, new session, clear, delete, export, rename, and favorite.
-- Conversation persistence in a local JSON file under Zotero's data directory with hard capacity limits.
-- Diagnostics panel for retries, model list failures, and final request errors.
-- Shared pure-logic modules for model metadata parsing, conversation storage, item scoping, retry decisions, and tool actions.
-- Unit tests for provider fallback, model probing, context preview, persistence parsing, web search parsing, tool-action parsing, and startup.
-- Zotero UI manual regression checklist for release verification.
-- Release documentation for installation, provider setup, privacy, compatibility gates, versioning, branches, tags, and GitHub release flow.
-
-## Technology
-
-- Zotero plugin scaffold: `zotero-plugin-scaffold`
-- Base template lineage: `windingwind/zotero-plugin-template`
-- UI/runtime language: TypeScript
-- Zotero target: Zotero 9.x for the current release
-- Node runtime: Node.js 24 LTS
-- Package manager: npm
-- License: `AGPL-3.0-or-later`
+1. Download the current release from
+   [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases/tag/v0.3.1),
+   or download
+   [`zotero-cat-v0.3.1.xpi`](https://github.com/Zotero-Cat/Zotero-Cat/releases/download/v0.3.1/zotero-cat-v0.3.1.xpi)
+   directly.
+2. Open Zotero.
+3. Go to `Tools -> Plugins`.
+4. Install the XPI file.
+5. Open Zotero preferences and configure Zotero-Cat.
+6. Select a Zotero item and open the `Zotero-Cat` section in the right item
+   pane.
 
 ## Requirements
 
-- macOS or another Zotero-supported desktop platform
 - Zotero 9.x
-- Node.js 24 LTS
-- npm
-- A model provider endpoint if you want live chat responses
+- macOS, Windows, or Linux supported by Zotero
+- An OpenAI-compatible model provider for live chat responses
 
-The repository contains both `.nvmrc` and `.node-version`, each set to `24`.
+Zotero 10 beta compatibility is not declared yet.
 
-## Development Quick Start
+## Connect A Model Provider
 
-1. Switch to the project Node version:
+Open the `Zotero-Cat` settings pane in Zotero preferences.
 
-```bash
-nvm use
-```
+Fill in:
 
-If Node 24 is not installed:
+- `Provider`: use `openai-compatible` unless you know you need another preset.
+- `Base URL`: use the provider's API base URL, not the website homepage.
+- `API Key`: Zotero-Cat stores it in Firefox Login Manager.
+- `Model`: fetch the model list if your provider supports `/models`, or enter
+  a model name manually.
+- `Reasoning effort`: Zotero-Cat shows provider-declared options when the model
+  list includes them. Otherwise, keep `Default`.
 
-```bash
-nvm install
-```
+Use `Test Connection` before saving if you are trying a new provider.
 
-2. Copy environment configuration:
+Provider examples: [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md) |
+[中文](./doc/PROVIDER_SETUP.zh-CN.md)
 
-```bash
-cp .env.example .env
-```
+## What You Can Do
 
-3. Fill Zotero paths in `.env` if needed by your local scaffold setup.
+- Chat about the selected Zotero item.
+- Ask for summaries, critiques, related-work notes, and method explanations.
+- Use selected text from Zotero's PDF reader as context.
+- Keep separate chat history per Zotero item.
+- Rename, export, favorite, or delete sessions.
+- Enable web search when you want Zotero-Cat to fetch search snippets.
 
-4. Install dependencies:
+Web search uses snippets only. It does not crawl full webpages.
 
-```bash
-npm install
-```
+## PDF Tools
 
-5. Start Zotero with the plugin loaded:
+PDF tools are experimental and off by default. Turn on `PDF tools` in the chat
+controls when you want the assistant to read a PDF or propose annotations.
 
-```bash
-npm start
-```
+Current PDF tools can:
 
-6. Open Zotero, select an item, and open the `Zotero-Cat` section in the right item pane.
+- read PDF text from the current item;
+- list existing PDF annotations;
+- propose highlights, underlines, notes, updates, and deletes;
+- show review cards before Zotero writes changes;
+- apply accepted proposals through Zotero's annotation APIs.
 
-## Install A Packaged XPI
+Zotero-Cat does not let the model write directly to your PDF. Write actions
+become proposal cards first unless you explicitly enable auto-apply.
 
-For packaged installation, build or download the release XPI, then install it from Zotero `Tools -> Plugins`.
+Known PDF limits:
 
-Full installation notes are in [doc/INSTALLATION.md](./doc/INSTALLATION.md). A Chinese version is available at [doc/INSTALLATION.zh-CN.md](./doc/INSTALLATION.zh-CN.md).
+- Highlights need exact text from one PDF page.
+- Cross-page highlights should be split into page-local proposals.
+- Scanned, encrypted, or OCR-poor PDFs may not provide reliable text.
 
-## Provider Configuration
+## Privacy And Storage
 
-Open Zotero preferences and find the `Zotero-Cat` settings pane.
+Zotero-Cat stores data locally unless you send a chat request or enable web
+search.
 
-Configure:
+- API keys: Firefox Login Manager
+- Settings: Zotero preferences
+- Conversation history: `<Zotero data directory>/zotero-cat/agent-conversations.json`
+- Chat content: sent to the model provider you configure
+- Web search queries: sent only when you enable web search
 
-- Provider ID: currently use `openai-compatible` unless testing a preset path.
-- Base URL: use the provider's real API base URL, not the website homepage.
-- API Key: saved through Firefox Login Manager.
-- Test Connection: checks the current form values without saving them.
-- Save Settings: persists provider, base URL, and key after explicit user action.
+Privacy notes: [doc/PRIVACY.md](./doc/PRIVACY.md) |
+[中文](./doc/PRIVACY.zh-CN.md)
 
-The chat input area can fetch the model list from the provider. Zotero-Cat expects OpenAI-compatible JSON from `/models`. If a provider does not expose model metadata, use a custom model name and default reasoning effort.
+## Help
 
-Provider setup examples are in [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md). A Chinese version is available at [doc/PROVIDER_SETUP.zh-CN.md](./doc/PROVIDER_SETUP.zh-CN.md).
+- Installation: [doc/INSTALLATION.md](./doc/INSTALLATION.md) |
+  [中文](./doc/INSTALLATION.zh-CN.md)
+- Provider setup: [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md) |
+  [中文](./doc/PROVIDER_SETUP.zh-CN.md)
+- Changelog: [CHANGELOG.md](./CHANGELOG.md) |
+  [中文](./CHANGELOG.zh-CN.md)
+- Roadmap: [TODO.md](./TODO.md) | [中文](./TODO.zh-CN.md)
+- Releases:
+  [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases)
 
-## Data Storage
+## For Contributors
 
-Zotero-Cat stores different data in different places:
-
-- Conversation history: local JSON file at `<Zotero data directory>/zotero-cat/agent-conversations.json`.
-- Provider, Base URL, selected model, reasoning effort, endpoint hints: Zotero prefs under `extensions.zotero.zoterocat.*`.
-- Web search toggle, search provider, and search endpoint: Zotero prefs under `extensions.zotero.zoterocat.*`.
-- PDF tools toggle and auto-apply setting: Zotero prefs under `extensions.zotero.zoterocat.*`.
-- API Key: Firefox Login Manager, scoped by provider and base URL.
-- Custom context: Zotero pref `extensions.zotero.zoterocat.customContextStore`, scoped by Zotero item key.
-
-Conversation persistence limits:
-
-- Maximum 128 persisted conversations globally.
-- Maximum 24 persisted conversations per Zotero item.
-- Maximum 80 persisted messages per conversation.
-- Maximum 12000 characters per persisted message.
-
-More privacy and storage notes are in [doc/PRIVACY.md](./doc/PRIVACY.md). A Chinese version is available at [doc/PRIVACY.zh-CN.md](./doc/PRIVACY.zh-CN.md).
-
-## Development Commands
-
-```bash
-npm run lint:check
-npm run build
-npm test
-npm start
-```
-
-`npm test` uses `zotero-plugin test --exit-on-finish` so the scaffold test process exits after the suite completes.
-
-## CI And Quality
-
-GitHub Actions uses `.nvmrc` through `actions/setup-node@v4`, installs dependencies with `npm ci`, and runs lint, build, and tests in separate jobs.
-
-Quality entry points:
-
-- Static and formatting check: `npm run lint:check`
-- Build and type check: `npm run build`
-- Scaffold test suite: `npm test`
-- Zotero UI manual regression: [doc/UI_REGRESSION_CHECKLIST.md](./doc/UI_REGRESSION_CHECKLIST.md) and [doc/UI_REGRESSION_CHECKLIST.zh-CN.md](./doc/UI_REGRESSION_CHECKLIST.zh-CN.md)
-
-## Release
-
-Release policy and tagging rules are defined in [doc/RELEASE.md](./doc/RELEASE.md). A Chinese version is available at [doc/RELEASE.zh-CN.md](./doc/RELEASE.zh-CN.md). Changelog entries are tracked in [CHANGELOG.md](./CHANGELOG.md) and [CHANGELOG.zh-CN.md](./CHANGELOG.zh-CN.md).
-
-The packaged add-on currently declares:
-
-- `strict_min_version`: `9.0`
-- `strict_max_version`: `9.*`
-
-Zotero 10 beta compatibility is not declared until the manual checklist passes on the current beta line.
-
-## Repository Layout
-
-- `src/modules/agent/section.ts`: Zotero-Cat item-pane UI, runtime state coordination, and UI events.
-- `src/modules/agent/provider.ts`: Provider abstraction, OpenAI-compatible request logic, streaming parser, endpoint probing.
-- `src/modules/agent/context.ts`: Zotero metadata, note, annotation, and selected-text context assembly.
-- `src/modules/agent/modelMetadata.ts`: Model endpoint candidates, model-list parsing, context-window parsing, and reasoning-effort metadata.
-- `src/modules/agent/conversationStore.ts`: Conversation state types, defensive persistence parsing, serialization, and capacity selection.
-- `src/modules/agent/itemScope.ts`: Primary Zotero item resolution and per-item scope keys.
-- `src/modules/agent/chatRetry.ts`: Chat retry and cancellation classification.
-- `src/modules/agent/types.ts`: Shared agent message types.
-- `src/modules/agent/toolAction.ts`: Tool action registry, parser, and execution dispatcher.
-- `src/modules/agent/webSearchContext.ts`: Web search context orchestration and tool handler registration.
-- `src/modules/agent/annotationTools.ts`: PDF read/write tool handler registration and annotation proposal resolution.
-- `src/modules/agent/annotationProposals.ts`: Annotation proposal state machine.
-- `src/modules/agent/proposalView.ts`: Annotation proposal review UI rendering.
-- `src/modules/tools/webSearch.ts`: DuckDuckGo/SearXNG search requests and result parsing.
-- `src/modules/tools/pdfReader.ts`: PDF text extraction and text-to-rect matching.
-- `src/modules/tools/pdfAnnotations.ts`: Zotero annotation persistence wrappers.
-- `src/modules/agent/promptTemplates.ts`: Prompt templates and localized system prompts.
-- `src/modules/agent/secureApiKey.ts`: Firefox Login Manager API Key storage.
-- `src/modules/preferenceScript.ts`: Preferences pane behavior.
-- `addon/locale/en-US/*` and `addon/locale/zh-CN/*`: Fluent localization files.
-- `addon/content/icons/*`: Static icon and logo assets.
-- `test/*`: Unit and scaffold tests.
-- `doc/UI_REGRESSION_CHECKLIST.md` / `doc/UI_REGRESSION_CHECKLIST.zh-CN.md`: Manual Zotero UI release checklist.
-- `doc/INSTALLATION.md` / `doc/INSTALLATION.zh-CN.md`: Packaged XPI installation notes.
-- `doc/PROVIDER_SETUP.md` / `doc/PROVIDER_SETUP.zh-CN.md`: OpenAI-compatible provider setup examples.
-- `doc/PRIVACY.md` / `doc/PRIVACY.zh-CN.md`: Privacy and local data-storage notes.
-- `doc/RELEASE.md` / `doc/RELEASE.zh-CN.md`: Versioning, tagging, compatibility, and release workflow.
-- `doc/release-notes/*`: Release notes in English and Chinese.
-- `doc/release-verification/*`: Release verification records in English and Chinese.
-
-## Roadmap
-
-See [TODO.md](./TODO.md) for the detailed phase plan. A Chinese version is available at [TODO.zh-CN.md](./TODO.zh-CN.md).
-
-Post-0.3.1 hardening:
-
-- Continue validating PDF tools on real Zotero 9 libraries.
-- Verify the latest Zotero beta if available.
-- Keep Zotero 9 manual checklist results current after user-visible UI changes.
-- Capture real installation screenshots for public release notes.
-
-## Trademark And Non-Affiliation
-
-Zotero-Cat is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Zotero or Digital Scholar. Zotero is a trademark of Corporation for Digital Scholarship.
+Development notes live in [CONTRIBUTING.md](./CONTRIBUTING.md) and
+[AGENTS.md](./AGENTS.md). The project uses Node.js 24 LTS and the
+`zotero-plugin-scaffold` toolchain.

@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- README 改为面向用户的简明指南，保留安装、Provider 设置、PDF 工具、隐私和帮助链接，移除首页里的开发细节和仓库结构长清单。
+
 ### 修复
 
 - GitHub Release notes 现在使用绝对中英文链接，中文版 release note 链接不会再被解析到 `/releases/tag/...` 下并返回 404。

@@ -7,6 +7,12 @@ versions until the first public stability commitment.
 
 ## [Unreleased]
 
+### Changed
+
+- README is now a user-focused guide with installation, provider setup, PDF
+  tools, privacy, and help links instead of development internals and repository
+  structure.
+
 ### Fixed
 
 - GitHub Release notes now use absolute bilingual links so the Chinese release
