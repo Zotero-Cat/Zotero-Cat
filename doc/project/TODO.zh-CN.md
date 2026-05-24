@@ -79,7 +79,7 @@
 
 - [x] 为 provider endpoint fallback、模型列表探测、连接解析、上下文预览和
       token 估算、会话持久化解析、启动脚手架添加单元测试。
-- [x] 添加 `doc/UI_REGRESSION_CHECKLIST.md`。
+- [x] 添加 `doc/release/UI_REGRESSION_CHECKLIST.md`。
 - [x] `npm test` 完成后自动退出;CI 使用 `.nvmrc` + `npm ci`。
 - [x] 从 `section.ts` 拆出模型 metadata、会话持久化、条目作用域、聊天重试
       分类、共享 message types 等纯模块。
@@ -90,7 +90,7 @@
 
 目标:产出可安装 XPI,让本地开发机器之外的用户可以使用。
 
-- [x] 在 Zotero 9 当前稳定版运行 `doc/UI_REGRESSION_CHECKLIST.md`。
+- [x] 在 Zotero 9 当前稳定版运行 `doc/release/UI_REGRESSION_CHECKLIST.md`。
 - [x] 本地构建 XPI;通过 Zotero Add-ons Manager 安装;验证设置和会话持久化
       在安装后保持。
 - [x] 添加 `CHANGELOG.md`;定义 `0.x` 版本策略和 release branch/tag 规则。
@@ -193,7 +193,7 @@
 - [x] 新增 `test/pdf-tools-logic.test.ts`:文本→rects 模糊匹配与标注 JSON
       校验(Mock Zotero APIs)。
 - [x] 新增 `test/proposal-state.test.ts`:状态机边界。
-- [x] 更新 `doc/UI_REGRESSION_CHECKLIST.md`:新增创建/修改/删除标注用例
+- [x] 更新 `doc/release/UI_REGRESSION_CHECKLIST.md`:新增创建/修改/删除标注用例
       与引导页。
 - [x] `npm run lint:check && npm run build && npm test` 全绿。
 

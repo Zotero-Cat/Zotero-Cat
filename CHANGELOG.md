@@ -12,12 +12,15 @@ versions until the first public stability commitment.
 - README is now a user-focused guide with installation, provider setup, PDF
   tools, privacy, and help links instead of development internals and repository
   structure.
+- User, project, and release Markdown has been grouped under `doc/user/`,
+  `doc/project/`, and `doc/release/`; the Claude-specific handoff now lives
+  under `.claude/`.
 
 ### Fixed
 
 - GitHub Release notes now use absolute bilingual links so the Chinese release
   note link no longer resolves under `/releases/tag/...` and returns 404.
-- The release workflow now applies `doc/release-notes/<version>.md` to the
+- The release workflow now applies `doc/release/notes/<version>.md` to the
   GitHub Release body after publishing, avoiding auto-generated placeholder
   notes.
 

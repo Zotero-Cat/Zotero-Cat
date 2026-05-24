@@ -345,7 +345,7 @@ npm test
 Manual Zotero UI validation lives in:
 
 ```text
-doc/UI_REGRESSION_CHECKLIST.md
+doc/release/UI_REGRESSION_CHECKLIST.md
 ```
 
 Run the manual checklist before release work and record Zotero version, OS, date, provider, and result.
@@ -369,7 +369,7 @@ Workflow file: `.github/workflows/release.yml`.
 Release workflow behavior:
 
 - Manual `workflow_dispatch` runs lint, build, tests, and uploads `.scaffold/build` as a release-candidate artifact. It does not publish a GitHub Release.
-- Pushing a `v*` tag runs the same checks, uploads the artifact, runs `npm run release`, then applies `doc/release-notes/<version>.md` to the GitHub Release body if the file exists.
+- Pushing a `v*` tag runs the same checks, uploads the artifact, runs `npm run release`, then applies `doc/release/notes/<version>.md` to the GitHub Release body if the file exists.
 - Release-note language switch links should use absolute GitHub URLs. Relative links such as `./0.3.1.zh-CN.md` resolve under `/releases/tag/...` on GitHub Release pages and produce 404s.
 - Release tags use `v0.x.y`; pre-release tags use `v0.x.y-alpha`, `v0.x.y-beta.n`, or another SemVer pre-release suffix.
 - The scaffold-managed updater assets are published to the special GitHub release tag named `release`.
@@ -379,7 +379,7 @@ The packaged manifest currently targets Zotero 9 only:
 - `strict_min_version`: `9.0`
 - `strict_max_version`: `9.*`
 
-Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` passes on the current Zotero beta.
+Do not widen compatibility to Zotero 10 until `doc/release/UI_REGRESSION_CHECKLIST.md` passes on the current Zotero beta.
 
 ## Important Files
 
@@ -415,15 +415,16 @@ Do not widen compatibility to Zotero 10 until `doc/UI_REGRESSION_CHECKLIST.md` p
 - `addon/locale/zh-CN/*`: Chinese Fluent strings.
 - `test/*`: automated tests.
 - `README.md` / `README.zh-CN.md`: public project homepage in English and Chinese.
-- `CONTRIBUTING.md` / `CONTRIBUTING.zh-CN.md`: contribution guide in English and Chinese.
-- `TODO.md` / `TODO.zh-CN.md`: public phase plan in English and Chinese.
-- `doc/UI_REGRESSION_CHECKLIST.md` / `doc/UI_REGRESSION_CHECKLIST.zh-CN.md`: manual UI checklist in English and Chinese.
-- `doc/INSTALLATION.md` / `doc/INSTALLATION.zh-CN.md`: packaged XPI installation notes in English and Chinese.
-- `doc/PROVIDER_SETUP.md` / `doc/PROVIDER_SETUP.zh-CN.md`: provider setup examples in English and Chinese.
-- `doc/PRIVACY.md` / `doc/PRIVACY.zh-CN.md`: privacy and local storage notes in English and Chinese.
-- `doc/RELEASE.md` / `doc/RELEASE.zh-CN.md`: release gates, versioning, branch/tag policy, and workflow notes in English and Chinese.
-- `doc/release-notes/*`: release notes in English and Chinese.
-- `doc/release-verification/*`: release verification records in English and Chinese.
+- `.claude/CLAUDE.md`: Claude-specific project handoff notes.
+- `.github/CONTRIBUTING.md` / `.github/CONTRIBUTING.zh-CN.md`: contribution guide in English and Chinese.
+- `doc/project/TODO.md` / `doc/project/TODO.zh-CN.md`: public phase plan in English and Chinese.
+- `doc/release/UI_REGRESSION_CHECKLIST.md` / `doc/release/UI_REGRESSION_CHECKLIST.zh-CN.md`: manual UI checklist in English and Chinese.
+- `doc/user/INSTALLATION.md` / `doc/user/INSTALLATION.zh-CN.md`: packaged XPI installation notes in English and Chinese.
+- `doc/user/PROVIDER_SETUP.md` / `doc/user/PROVIDER_SETUP.zh-CN.md`: provider setup examples in English and Chinese.
+- `doc/user/PRIVACY.md` / `doc/user/PRIVACY.zh-CN.md`: privacy and local storage notes in English and Chinese.
+- `doc/release/RELEASE.md` / `doc/release/RELEASE.zh-CN.md`: release gates, versioning, branch/tag policy, and workflow notes in English and Chinese.
+- `doc/release/notes/*`: release notes in English and Chinese.
+- `doc/release/verification/*`: release verification records in English and Chinese.
 - `CHANGELOG.md` / `CHANGELOG.zh-CN.md`: user-facing release history in English and Chinese.
 
 ## Next Phase

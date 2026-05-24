@@ -56,7 +56,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          NOTES_FILE="doc/release-notes/${VERSION}.md"
+          NOTES_FILE="doc/release/notes/${VERSION}.md"
           if [ -f "$NOTES_FILE" ]; then
             gh release edit "$GITHUB_REF_NAME" --notes-file "$NOTES_FILE"
           fi

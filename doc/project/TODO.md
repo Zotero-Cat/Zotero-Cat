@@ -85,7 +85,7 @@ Goal: reduce regression risk before packaging and public release.
 - [x] Add unit tests for provider endpoint fallback, model-list probing,
       connection parsing, context preview/token estimate, conversation parser,
       and startup scaffold.
-- [x] Add `doc/UI_REGRESSION_CHECKLIST.md`.
+- [x] Add `doc/release/UI_REGRESSION_CHECKLIST.md`.
 - [x] Make `npm test` exit after completion; use `.nvmrc` + `npm ci` in CI.
 - [x] Extract pure modules out of `section.ts` (model metadata, conversation
       persistence, item scoping, chat retry classification, shared message types).
@@ -97,7 +97,7 @@ Goal: reduce regression risk before packaging and public release.
 Goal: produce an installable XPI and make the project usable outside the local
 development machine.
 
-- [x] Run `doc/UI_REGRESSION_CHECKLIST.md` against Zotero 9 current stable.
+- [x] Run `doc/release/UI_REGRESSION_CHECKLIST.md` against Zotero 9 current stable.
 - [x] Build and install XPI through Zotero Add-ons Manager; verify settings
       and conversation persistence survive install.
 - [x] Add `CHANGELOG.md`; define `0.x` versioning and release branch/tag rules.
@@ -217,7 +217,7 @@ PDFs.
 - [x] Add `test/pdf-tools-logic.test.ts` — text→rects fuzzy matching and
       annotation JSON validation with mocked Zotero APIs.
 - [x] Add `test/proposal-state.test.ts` — state machine edge cases.
-- [x] Update `doc/UI_REGRESSION_CHECKLIST.md` with create/modify/delete
+- [x] Update `doc/release/UI_REGRESSION_CHECKLIST.md` with create/modify/delete
       annotation cases and the onboarding gate.
 - [x] `npm run lint:check && npm run build && npm test` all green.
 

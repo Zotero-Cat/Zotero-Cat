@@ -47,8 +47,8 @@ Fill in:
 
 Use `Test Connection` before saving if you are trying a new provider.
 
-Provider examples: [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md) |
-[中文](./doc/PROVIDER_SETUP.zh-CN.md)
+Provider examples: [doc/user/PROVIDER_SETUP.md](./doc/user/PROVIDER_SETUP.md) |
+[中文](./doc/user/PROVIDER_SETUP.zh-CN.md)
 
 ## What You Can Do
 
@@ -94,23 +94,24 @@ search.
 - Chat content: sent to the model provider you configure
 - Web search queries: sent only when you enable web search
 
-Privacy notes: [doc/PRIVACY.md](./doc/PRIVACY.md) |
-[中文](./doc/PRIVACY.zh-CN.md)
+Privacy notes: [doc/user/PRIVACY.md](./doc/user/PRIVACY.md) |
+[中文](./doc/user/PRIVACY.zh-CN.md)
 
 ## Help
 
-- Installation: [doc/INSTALLATION.md](./doc/INSTALLATION.md) |
-  [中文](./doc/INSTALLATION.zh-CN.md)
-- Provider setup: [doc/PROVIDER_SETUP.md](./doc/PROVIDER_SETUP.md) |
-  [中文](./doc/PROVIDER_SETUP.zh-CN.md)
+- Installation: [doc/user/INSTALLATION.md](./doc/user/INSTALLATION.md) |
+  [中文](./doc/user/INSTALLATION.zh-CN.md)
+- Provider setup: [doc/user/PROVIDER_SETUP.md](./doc/user/PROVIDER_SETUP.md) |
+  [中文](./doc/user/PROVIDER_SETUP.zh-CN.md)
 - Changelog: [CHANGELOG.md](./CHANGELOG.md) |
   [中文](./CHANGELOG.zh-CN.md)
-- Roadmap: [TODO.md](./TODO.md) | [中文](./TODO.zh-CN.md)
+- Roadmap: [doc/project/TODO.md](./doc/project/TODO.md) |
+  [中文](./doc/project/TODO.zh-CN.md)
 - Releases:
   [GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases)
 
 ## For Contributors
 
-Development notes live in [CONTRIBUTING.md](./CONTRIBUTING.md) and
-[AGENTS.md](./AGENTS.md). The project uses Node.js 24 LTS and the
+Development notes live in [.github/CONTRIBUTING.md](./.github/CONTRIBUTING.md)
+and [AGENTS.md](./AGENTS.md). The project uses Node.js 24 LTS and the
 `zotero-plugin-scaffold` toolchain.

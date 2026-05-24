@@ -44,7 +44,7 @@ Automated gates:
 
 Manual gates:
 
-- Run `doc/UI_REGRESSION_CHECKLIST.md` on Zotero 9 stable.
+- Run `doc/release/UI_REGRESSION_CHECKLIST.md` on Zotero 9 stable.
 - Install the packaged XPI through Zotero `Tools -> Plugins`.
 - Confirm settings survive reopening Zotero.
 - Confirm API Key lookup still works through Firefox Login Manager.
@@ -86,7 +86,7 @@ The release workflow lives at `.github/workflows/release.yml`.
 - Pushing a `v*` tag runs the same checks, uploads the artifact, then runs
   `npm run release` to publish the GitHub Release and update manifest assets.
 - After `npm run release`, the workflow applies
-  `doc/release-notes/<version>.md` to the GitHub Release body when that file
+  `doc/release/notes/<version>.md` to the GitHub Release body when that file
   exists. Keep language-switch links in release notes as absolute GitHub URLs,
   because relative links in a Release page resolve under `/releases/tag/...`.
 - After publishing, the workflow marks the special `release` tag as

@@ -9,11 +9,13 @@
 ### 变更
 
 - README 改为面向用户的简明指南，保留安装、Provider 设置、PDF 工具、隐私和帮助链接，移除首页里的开发细节和仓库结构长清单。
+- 用户、项目和发布 Markdown 已按 `doc/user/`、`doc/project/`、`doc/release/`
+  分组；Claude 专用交接文档现在放在 `.claude/` 下。
 
 ### 修复
 
 - GitHub Release notes 现在使用绝对中英文链接，中文版 release note 链接不会再被解析到 `/releases/tag/...` 下并返回 404。
-- Release workflow 现在会在发布后把 `doc/release-notes/<version>.md` 写入 GitHub Release 正文，避免出现自动生成的占位说明。
+- Release workflow 现在会在发布后把 `doc/release/notes/<version>.md` 写入 GitHub Release 正文，避免出现自动生成的占位说明。
 
 ## [0.3.1] - 2026-05-23
 

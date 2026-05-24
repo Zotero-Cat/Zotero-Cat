@@ -39,8 +39,8 @@ Zotero 10 beta 兼容性尚未声明。
 
 第一次接入提供方时，建议先点 `Test Connection`。
 
-Provider 示例：[doc/PROVIDER_SETUP.zh-CN.md](./doc/PROVIDER_SETUP.zh-CN.md) |
-[English](./doc/PROVIDER_SETUP.md)
+Provider 示例：[doc/user/PROVIDER_SETUP.zh-CN.md](./doc/user/PROVIDER_SETUP.zh-CN.md) |
+[English](./doc/user/PROVIDER_SETUP.md)
 
 ## 可以用来做什么
 
@@ -83,20 +83,22 @@ PDF 已知限制：
 - 聊天内容：发送给你配置的模型提供方
 - 联网搜索查询：只在你开启联网搜索时发送
 
-隐私说明：[doc/PRIVACY.zh-CN.md](./doc/PRIVACY.zh-CN.md) |
-[English](./doc/PRIVACY.md)
+隐私说明：[doc/user/PRIVACY.zh-CN.md](./doc/user/PRIVACY.zh-CN.md) |
+[English](./doc/user/PRIVACY.md)
 
 ## 帮助
 
-- 安装说明：[doc/INSTALLATION.zh-CN.md](./doc/INSTALLATION.zh-CN.md) |
-  [English](./doc/INSTALLATION.md)
-- Provider 设置：[doc/PROVIDER_SETUP.zh-CN.md](./doc/PROVIDER_SETUP.zh-CN.md) |
-  [English](./doc/PROVIDER_SETUP.md)
+- 安装说明：[doc/user/INSTALLATION.zh-CN.md](./doc/user/INSTALLATION.zh-CN.md) |
+  [English](./doc/user/INSTALLATION.md)
+- Provider 设置：[doc/user/PROVIDER_SETUP.zh-CN.md](./doc/user/PROVIDER_SETUP.zh-CN.md) |
+  [English](./doc/user/PROVIDER_SETUP.md)
 - 更新日志：[CHANGELOG.zh-CN.md](./CHANGELOG.zh-CN.md) |
   [English](./CHANGELOG.md)
-- Roadmap：[TODO.zh-CN.md](./TODO.zh-CN.md) | [English](./TODO.md)
+- Roadmap：[doc/project/TODO.zh-CN.md](./doc/project/TODO.zh-CN.md) |
+  [English](./doc/project/TODO.md)
 - 发布页：[GitHub Releases](https://github.com/Zotero-Cat/Zotero-Cat/releases)
 
 ## 贡献者入口
 
-开发说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 和 [AGENTS.md](./AGENTS.md)。项目使用 Node.js 24 LTS 和 `zotero-plugin-scaffold` 工具链。
+开发说明见 [.github/CONTRIBUTING.zh-CN.md](./.github/CONTRIBUTING.zh-CN.md)
+和 [AGENTS.md](./AGENTS.md)。项目使用 Node.js 24 LTS 和 `zotero-plugin-scaffold` 工具链。
